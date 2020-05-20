@@ -194,6 +194,13 @@ void SimpleX::init_triangulation(char* inputName){
   // triangulate the subboxes
   compute_triangulation();
 
+  if( COMM_RANK == 0 ) {
+    surfaces.clear();
+    surfaces.resize(vertices.size(), 0.);
+    if (fuvprop)
+      compute_surfaces();
+  }
+
   //create a site at each vertex from the list of simplices that was obtained 
   //from the triangulation functions, containing the physical parameters
   create_sites();
@@ -568,11 +575,17 @@ void SimpleX::read_vertex_list(){
   vertices.resize(numSites);
   temp_n_HI_list.resize(numSites);
   temp_flux_list.resize(numSites);
+  temp_fuv_flux_list.resize(numSites);
   temp_n_HII_list.resize(numSites);
+  temp_n_H2_list.resize(numSites);
+  temp_n_CO_list.resize(numSites);
+  temp_n_C_list.resize(numSites);
+  temp_n_O_list.resize(numSites);
   temp_u_list.resize(numSites);
   temp_dudt_list.resize(numSites);
   temp_clumping_list.resize(numSites);
   temp_metallicity_list.resize(numSites);
+  temp_turbulence_list.resize(numSites);
   
   //structures needed for reading in the values from hdf5
   arr_1D<float> double_arr;
@@ -621,6 +634,62 @@ void SimpleX::read_vertex_list(){
       temp_n_HII_list[ j + i ] = double_arr(j);
     }
 
+    //molecular fraction
+    try {
+        double_arr.reinit(1,dims);
+        file.read_data("Vertices/n_H2",offset, &double_arr);
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_H2_list[ j + i ] = double_arr(j);
+        }
+    }
+    catch (...) {
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_H2_list[ j + i ] = 0.0;
+        }
+    }
+
+    //CO fraction
+    try {
+        double_arr.reinit(1,dims);
+        file.read_data("Vertices/n_CO",offset, &double_arr);
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_CO_list[ j + i ] = double_arr(j);
+        }
+    }
+    catch (...) {
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_CO_list[ j + i ] = 0.0;
+        }
+    }
+
+    //c+ fraction
+    try {
+        double_arr.reinit(1,dims);
+        file.read_data("Vertices/n_C",offset, &double_arr);
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_C_list[ j + i ] = double_arr(j);
+        }
+    }
+    catch (...) {
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_C_list[ j + i ] = 0.0;
+        }
+    }
+
+    //oxygen fraction
+    try {
+        double_arr.reinit(1,dims);
+        file.read_data("Vertices/n_O",offset, &double_arr);
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_O_list[ j + i ] = double_arr(j);
+        }
+    }
+    catch (...) {
+        for(unsigned int j=0; j<dims[0]; j++ ){
+          temp_n_O_list[ j + i ] = 0.0;
+        }
+    }
+
     //flux
     double_arr.reinit(1,dims);
     file.read_data("Vertices/sourceNIon",offset, &double_arr);
@@ -628,13 +697,20 @@ void SimpleX::read_vertex_list(){
       temp_flux_list[ j + i ] = double_arr(j);
     }
 
+    //fuv flux
+    double_arr.reinit(1,dims);
+    file.read_data("Vertices/sourceNFUV",offset, &double_arr);
+    for(unsigned int j=0; j<dims[0]; j++ ){
+      temp_fuv_flux_list[ j + i ] = double_arr(j);
+    }
+
     //temperature
     double_arr.reinit(1,dims);
     file.read_data("Vertices/temperature",offset, &double_arr);
     for(unsigned int j=0; j<dims[0]; j++ ){
       temp_u_list[ j + i ] = T_to_u(double_arr(j),
-       ( temp_n_HI_list[ j + i ] + temp_n_HII_list[ j + i ] )/
-         (temp_n_HI_list[ j + i ] + 2*temp_n_HII_list[ j + i ]));
+       ( temp_n_HI_list[ j + i ] + temp_n_HII_list[ j + i ] + temp_n_H2_list[ j + i ])/
+         (temp_n_HI_list[ j + i ] + 2*temp_n_HII_list[ j + i ] + 0.5*temp_n_H2_list[ j + i ]));
       temp_dudt_list[ j + i ] = 0.0;
     }
 
@@ -1395,7 +1471,8 @@ void SimpleX::compute_triangulation(){
 	      // ---------- check whether the boundaries are sufficiently large ---------------//
 
 	      //calculate the radius of the circumsphere
-	      double radiusCC = sqrt( pow( xCC - (double) vertices[ in_box[ ids[0] ] ].get_x(), 2) +
+	      double radiusCC = sqrt( 
+                      pow( xCC - (double) vertices[ in_box[ ids[0] ] ].get_x(), 2) +
 				      pow( yCC - (double) vertices[ in_box[ ids[0] ] ].get_y(), 2) + 
 				      pow( zCC - (double) vertices[ in_box[ ids[0] ] ].get_z(), 2) );
 
@@ -1476,6 +1553,7 @@ void SimpleX::compute_triangulation(){
     simplices.insert( simplices.end(), simplices_subbox.begin(), simplices_subbox.end() );
     simplices_subbox.clear();
 
+
     //if all went well, increase subbox number and triangulate the next
     this_subbox++;
   }//for all subboxes on this proc
@@ -1486,6 +1564,121 @@ void SimpleX::compute_triangulation(){
   }
 
 }
+
+
+
+/**** Compute the effective exposed surface of each vertex ****/
+// For every vertex in the convex hull of the vertex set,
+// compute the area of all Delaunay ridges (2D 'faces') on the convex hull,
+// and add a third of that area. 
+// When the point set is exposed to radiation, that area is used to compute
+// the total power to enter through that point.
+// This is used for the external FUV radiation field.
+// This computes the Delaunay triangulation of the vertex set again, without
+// domain decomposition, but also without border points.
+void SimpleX::compute_surfaces(){
+
+    // ---------- triangulate this subbox  ---------------//
+    //break "./src/Simplex.cpp" 1185
+    //variables needed for qhull call
+    FILE *errfile=stderr;
+    boolT ismalloc=False;
+    char flags[250];
+    sprintf(flags,"qhull d Qbb Qt T0");
+    facetT *facet;
+    facetT *neighbor, **neighborp;
+    ridgeT *ridge, **ridgep;
+    vertexT *vertex, **vertexp;
+    int curlong, totlong;
+
+    //arrays needed for qhull call
+    int* idList=NULL;
+    double* pt_array=NULL;
+    pt_array=new double[dimension*(vertices.size()-borderSites)];      
+    idList=new int[vertices.size()-borderSites];
+
+    int counter = 0;
+    //fill arrays with coordinates and id's; only use non-border sites
+    for( unsigned int q=0; q<vertices.size(); q++ ){
+      if (!vertices[ q ].get_border()) {
+        //id's
+        idList[counter]=q;
+        //coordinates
+        pt_array[counter*dimension]   = vertices[ q ].get_x();
+        pt_array[counter*dimension+1] = vertices[ q ].get_y();
+        pt_array[counter*dimension+2] = vertices[ q ].get_z();
+        counter++;
+      }
+    }
+ 
+    //call to qhull to do triangulation
+    int qh_error = qh_new_qhull(dimension, vertices.size()-borderSites, pt_array, ismalloc, flags, NULL, errfile);
+
+    int id[3];
+    float p[3][3];
+    double area;
+
+    int vertex_n, vertex_i;
+    int neighbor_n, neighbor_i;
+
+    if (!qh_error) {
+
+      // A simplex on the convex hull is recognized as a lower (nearest-site) Delaunay
+      // facet that has an upper (furthest-site) Delaunay neighbor. This neighbor shares
+      // an index with the opposite vertex, meaning that the other vertices define the
+      // exposed ridge. Each of those vertices then gets a third of the ridge area. 
+      FORALLfacets {
+        if (!facet->upperdelaunay) {
+          FOREACHneighbor_i_(facet) {
+            if (neighbor->upperdelaunay) {
+              FOREACHvertex_i_(facet->vertices) {
+                if (vertex_i < neighbor_i) {
+                  id[vertex_i] = idList[qh_pointid(vertex->point)];
+                  p[vertex_i][0] = vertices[id[vertex_i]].get_x();
+                  p[vertex_i][1] = vertices[id[vertex_i]].get_y();
+                  p[vertex_i][2] = vertices[id[vertex_i]].get_z();
+                }
+                else if (vertex_i > neighbor_i) {
+                  id[vertex_i-1] = idList[qh_pointid(vertex->point)];
+                  p[vertex_i-1][0] = vertices[id[vertex_i-1]].get_x();
+                  p[vertex_i-1][1] = vertices[id[vertex_i-1]].get_y();
+                  p[vertex_i-1][2] = vertices[id[vertex_i-1]].get_z();
+                }
+              }
+              area = area_triangle(p[0], p[1], p[2], 3);
+              for (int i = 0; i < 3; i++)
+                surfaces[id[i]] += area/3. * sizeBox*sizeBox;
+            }//upperdelaunay
+          }//for each neighbor
+        }//no upperdelaunay
+      }//for all facets
+    }//no qhull error
+
+
+
+    //free long memory
+    qh_freeqhull(!qh_ALL);
+
+    //free short memory and memory allocator
+    qh_memfreeshort (&curlong, &totlong);
+    if (curlong || totlong) {
+	  fprintf(errfile, "QHull: did not free %d bytes of long memory (%d pieces)", totlong, curlong);
+    }
+
+    //free dynamically allocated arrays
+    if(pt_array) {
+	  delete [] pt_array;
+	  pt_array=NULL;
+    }
+
+    if(idList) {
+	  delete [] idList;
+	  idList=NULL;
+    }
+
+}
+
+
 
 
 /****  Create the sites array  ****/
@@ -1571,6 +1764,11 @@ void SimpleX::create_sites(){
       local_numSites++;
     }
   }
+
+  // Assign exposed surface area to all non-border sites
+  for (int i = 0; i < vertices.size()-borderSites; i++)
+    sites[indices[i]].set_surface( surfaces[ i ] );
+
 
   MPI_Allreduce( &local_numSites, &numSites, 1, MPI_UNSIGNED, MPI_SUM , MPI_COMM_WORLD );
 
@@ -1678,7 +1876,7 @@ void SimpleX::initiate_ballistic_sites(){
 
       //exclude boundary points
       if( it->get_vertex_id() < temp_flux_list.size() ){
-	if( temp_flux_list[ it->get_vertex_id() ] > 0.0){
+	if( temp_flux_list[ it->get_vertex_id() ] > 0.0 || temp_fuv_flux_list[ it->get_vertex_id() ] > 0.0 ){
 	  //source is always direction conserving
 	  it->set_ballistic(0);
 	} //if flux
@@ -1813,8 +2011,8 @@ void SimpleX::compute_site_properties(){
     numPixels = ( it->get_ballistic() ) ? it->get_numNeigh() : number_of_directions;
 
     //create the intensity arrays
-    it->create_intensityIn( numFreq, numPixels );
-    it->create_intensityOut( numFreq, numPixels );
+    it->create_intensityIn( numFreq+fuvprop, numPixels );
+    it->create_intensityOut( numFreq+fuvprop, numPixels );
 
   }
 
@@ -2779,15 +2977,15 @@ void SimpleX::store_intensities(){
       intens_ids.push_back( it->get_vertex_id() );
 
       //resize the site_intensities vector
-      site_intensities.insert( site_intensities.end(), numFreq*numPixels, 0.0 );
+      site_intensities.insert( site_intensities.end(), (numFreq+fuvprop)*numPixels, 0.0 );
 
       //loop over directions
       for( unsigned int j=0; j<numPixels; j++ ){
   //loop over frequencies
-        for(short int f=0; f<numFreq; f++){
+        for(short int f=0; f<numFreq+fuvprop; f++){
 
     //position of this direction in array
-          unsigned int pos = f + j*numFreq + site_intensities.size() - numFreq*numPixels;
+          unsigned int pos = f + j*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
 
     //add all intensity to site_intensities in correct place
           site_intensities[pos] += it->get_intensityIn(f,j) + it->get_intensityOut(f,j);
@@ -2813,7 +3011,7 @@ const vector<unsigned long int> SimpleX::get_ballistic_sites_to_store(){
     if( it->get_process() == COMM_RANK && !it->get_border() && it->get_ballistic() ){
       //loop over all neighbours to see if they have intensities
       bool use = 0;
-      for(short int f=0; f<numFreq;f++){
+      for(short int f=0; f<numFreq+fuvprop;f++){
 	for( unsigned int j=0; !use && j<it->get_numNeigh(); j++ ){
 	  if( it->get_intensityIn(f,j) > 0.0 || it->get_intensityOut(f,j) > 0.0 ){
 	    use = 1;
@@ -2983,7 +3181,7 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
     //in site_intensities vector
     intens_ids.push_back( sites[ site_id ].get_vertex_id() );
     //resize the site_intensities vector
-    site_intensities.insert( site_intensities.end(), numFreq*numPixels, 0.0 );
+    site_intensities.insert( site_intensities.end(), (numFreq+fuvprop)*numPixels, 0.0 );
 
     //loop over all neighbours
     for( unsigned int j=0; j<sites[ site_id ].get_numNeigh(); j++ ){
@@ -3000,15 +3198,15 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
 	//give intensities to big array
 	for(unsigned int m=0; m<numPixels; m++) {
 	  if( directions[m] == j ){
-	    for(short int f=0; f<numFreq; f++){
-	      unsigned int pos = f + m*numFreq + site_intensities.size() - numFreq*numPixels;
+	    for(short int f=0; f<numFreq+fuvprop; f++){
+	      unsigned int pos = f + m*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
 	      double inten = ( (double) sites[ site_id ].get_intensityIn(f,j) + (double) sites[ site_id ].get_intensityOut(f,j) )/count;
 	      site_intensities[pos] += (float) inten;
 	    }//for all freq
 	  }
 	}
 	//now that they are stored, set them to zero
-	for(short int f=0; f<numFreq;f++){
+	for(short int f=0; f<numFreq+fuvprop;f++){
 	  sites[ site_id ].set_intensityOut(f,j,0.0);
 	  sites[ site_id ].set_intensityIn(f,j,0.0);
 	}
@@ -3029,9 +3227,9 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
 	    highestInprodNumber = m;
 	  }
 	}
-	for(short int f=0;f<numFreq; f++){
+	for(short int f=0;f<numFreq+fuvprop; f++){
 
-	  unsigned long int pos = f + highestInprodNumber*numFreq + site_intensities.size() - numFreq*numPixels;
+	  unsigned long int pos = f + highestInprodNumber*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
 
 	  double inten = ( (double) sites[ site_id ].get_intensityIn(f,j) + (double) sites[ site_id ].get_intensityOut(f,j) );
 	  site_intensities[pos] += (float) inten;
@@ -3145,7 +3343,7 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
     //in site_intensities vector
     intens_ids.push_back( sites[ site_id ].get_vertex_id() );
     //resize the site_intensities vector
-    site_intensities.insert( site_intensities.end(), numFreq*numPixels, 0.0 );
+    site_intensities.insert( site_intensities.end(), (numFreq+fuvprop)*numPixels, 0.0 );
 
     //loop over all neighbours
     for( unsigned int j=0; j<sites[ site_id ].get_numNeigh(); j++ ){
@@ -3164,9 +3362,9 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
 	for(unsigned int m=0; m<numPixels; m++) {
 	  if( directions[m] == j ){
 	    //loop over frequencies
-	    for(short int f=0; f<numFreq;f++){
+	    for(short int f=0; f<numFreq+fuvprop;f++){
 
-	      unsigned long int pos = f + m*numFreq + site_intensities.size() - numFreq*numPixels;
+	      unsigned long int pos = f + m*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
 
 	      double inten = ( (double) sites[ site_id ].get_intensityIn(f,j) + (double) sites[ site_id ].get_intensityOut(f,j) )/(double) count;
 	      site_intensities[pos] += (float) inten;
@@ -3192,9 +3390,9 @@ void SimpleX::store_ballistic_intensities( const vector<unsigned long int>& site
 	}
 
 	//loop over frequencies
-	for(short int f=0; f<numFreq; f++){
+	for(short int f=0; f<numFreq+fuvprop; f++){
 
-	  unsigned long int pos = f + highestInprodNumber*numFreq + site_intensities.size() - numFreq*numPixels;
+	  unsigned long int pos = f + highestInprodNumber*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
 
 	  double inten = ( (double) sites[ site_id ].get_intensityIn(f,j) + (double) sites[ site_id ].get_intensityOut(f,j) );
 	  site_intensities[pos] += (float) inten;
@@ -3290,10 +3488,10 @@ void SimpleX::return_intensities(){
             unsigned int pos = maps[orientation_index][orientation_index_old][j];
 
       //loop over frequencies
-            for(short int f=0; f<numFreq;f++){
+            for(short int f=0; f<numFreq+fuvprop;f++){
 
         //get the intensity that belongs to this site
-              double inten = (double) site_intensities[ i*numPixels*numFreq + j*numFreq + f ];
+              double inten = (double) site_intensities[ i*numPixels*(numFreq+fuvprop) + j*(numFreq+fuvprop) + f ];
 
         //in case there is already intensity in this direction
         //obsolete with the new header file
@@ -3497,10 +3695,10 @@ void SimpleX::return_ballistic_intensities(){
 		unsigned int j = reference_sphere[ mapping_pixels[m][p] ];
 		found = 1;
 
-		for(short int f=0; f<numFreq; f++){
+		for(short int f=0; f<numFreq+fuvprop; f++){
 
 		  //give this neighbour the intensity in site_intensities
-		  double inten = site_intensities[ i*numPixels*numFreq + m*numFreq + f ];
+		  double inten = site_intensities[ i*numPixels*(numFreq+fuvprop) + m*(numFreq+fuvprop) + f ];
 		  inten += (double) sites[site_id].get_intensityOut(f,j);
 
 		  sites[site_id].set_intensityOut(f,j, (float) inten);
@@ -3656,10 +3854,10 @@ void SimpleX::return_ballistic_intensities(){
 	    unsigned int j = highestInprodNumber;
 
 	    //loop over frequencies
-	    for(short int f=0; f<numFreq; f++){
+	    for(short int f=0; f<numFreq+fuvprop; f++){
 
 	      //give intensity of this pixel to Delaunay line with highest inner product
-	      double inten = site_intensities[ i*numPixels*numFreq + m*numFreq + f ];
+	      double inten = site_intensities[ i*numPixels*(numFreq+fuvprop) + m*(numFreq+fuvprop) + f ];
 
 	      inten += (double) sites[site_id].get_intensityOut(f,j);
 
@@ -3706,16 +3904,32 @@ void SimpleX::check_ballistic_sites(){
       //site is considered for DCT only when ionising radiation has come through
       //or the density is 0.0
       bool is_ionised = 0;
-      if( it->get_n_HII() > 0.0 || ( it->get_n_HI() + it->get_n_HII() ) == 0.0 ){
+      if( it->get_n_HII() > 0.0 || ( it->get_n_HI() + it->get_n_HII() + it->get_n_H2() ) == 0.0 ){
 	is_ionised = 1;
       }
 
       //calculate the mean optical depth over frequencies
       double tau = 0.0;
       for(short int f=0; f<numFreq; f++){
-	tau += it->get_n_HI() * UNIT_D * it->get_neigh_dist() * UNIT_L * cross_H[f] * straight_correction_factor;
+	    tau += it->get_n_HI() * UNIT_D * it->get_neigh_dist() * UNIT_L * cross_H[f] * straight_correction_factor;
+        if (dust) {
+          vector<double> freq_bounds = calc_freq_bounds(1., 1.e2);
+          double lambda = speed_of_light/(pow(10., (log10(freq_bounds[f]) + log10(freq_bounds[f+1]))/2.)*nu0HI);
+          double initial_coldens_H = (it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2()) * UNIT_D * it->get_neigh_dist() * UNIT_L;
+          tau += sigma_dust_combined_func(lambda)*initial_coldens_H*straight_correction_factor;
+        }
       }
-      tau /= numFreq;
+      if (fuvprop) {
+        // effective tau for hydrogen self-absorption, from Draine & Bertoldi 1996
+        // assumption is that the Doppler broadening parameter is related to the
+        // thermal motion (internal energy), times the turbulence
+        double b5 = sqrt(2.*it->get_internalEnergy())/1e5 * it->get_turbulence();
+        double x = it->get_n_H2() * UNIT_D / (5e14);
+        tau += -log( 0.965*pow(1.+x/b5, -2) + 0.035/sqrt(1.+x)*exp(-8.5e-4 * sqrt(1.+x)) );
+        if (dust)
+          tau += ( it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2() ) * UNIT_D * it->get_neigh_dist() * UNIT_L *sigma_dust_fuv * straight_correction_factor;
+      }
+      tau /= numFreq + fuvprop;
 
       //if optical depth is smaller than the switch set by user, switch from
       //ballistic to direction conserving
@@ -3776,14 +3990,14 @@ void SimpleX::check_ballistic_sites(){
 	  //the vertex id
 	  intens_ids.push_back( it->get_vertex_id() );
 	  //resize the site_intensities vector
-	  site_intensities.insert( site_intensities.end(), numPixels*numFreq, 0.0 );
+	  site_intensities.insert( site_intensities.end(), numPixels*(numFreq+fuvprop), 0.0 );
 	  //loop over directions
 	  for( unsigned int j=0; j<numPixels; j++ ){
 	    //loop over frequencies
-	    for(short int f=0; f<numFreq; f++){
+	    for(short int f=0; f<numFreq+fuvprop; f++){
 
 	      //position of this direction in array
-	      unsigned long int pos = f + j*numFreq + site_intensities.size() - numPixels*numFreq;
+	      unsigned long int pos = f + j*(numFreq+fuvprop) + site_intensities.size() - numPixels*(numFreq+fuvprop);
 
 	      //add all intensity to site_intensities in correct place
 	      site_intensities[pos] += it->get_intensityIn(f,j) + it->get_intensityOut(f,j);
@@ -3796,12 +4010,12 @@ void SimpleX::check_ballistic_sites(){
 	  }//for all pixels
 
 	  //delete the intensity arrays
-	  it->delete_intensityOut(numFreq);
-	  it->delete_intensityIn(numFreq);
+	  it->delete_intensityOut(numFreq+fuvprop);
+	  it->delete_intensityIn(numFreq+fuvprop);
 
 	  //create new intensity arrays with correct size
-	  it->create_intensityIn( numFreq, it->get_numNeigh() );
-	  it->create_intensityOut( numFreq, it->get_numNeigh() );
+	  it->create_intensityIn( numFreq+fuvprop, it->get_numNeigh() );
+	  it->create_intensityOut( numFreq+fuvprop, it->get_numNeigh() );
 
 
 	  //match the neighbours of this site
@@ -3858,11 +4072,11 @@ void SimpleX::check_ballistic_sites(){
 
     unsigned long int site_id = sites_to_store[i];
 
-    sites[ site_id ].delete_intensityOut(numFreq);
-    sites[ site_id ].delete_intensityIn(numFreq);
+    sites[ site_id ].delete_intensityOut(numFreq+fuvprop);
+    sites[ site_id ].delete_intensityIn(numFreq+fuvprop);
 
-    sites[ site_id ].create_intensityOut( numFreq, number_of_directions );
-    sites[ site_id ].create_intensityIn( numFreq, number_of_directions );
+    sites[ site_id ].create_intensityOut( numFreq+fuvprop, number_of_directions );
+    sites[ site_id ].create_intensityIn( numFreq+fuvprop, number_of_directions );
 
   }
 
@@ -3900,7 +4114,7 @@ void SimpleX::store_site_properties(){
       if( it->get_process() == COMM_RANK && !it->get_border() && it->get_neigh_dist() >= 0.0 ){
 
         bool is_ionised = 0;
-        if( it->get_n_HII() > 0.0 || (it->get_n_HII() + it->get_n_HI()) == 0.0 ){
+        if( it->get_n_HII() > 0.0 || (it->get_n_HII() + it->get_n_HI() + it->get_n_H2()) == 0.0 ){
           is_ionised = 1;
         }
 
@@ -3910,12 +4124,28 @@ void SimpleX::store_site_properties(){
   //triangulation hasn't been updated yet after sites were removed
         double aver_neigh_dist = 3*pow( (double) it->get_volume(), 1.0/3.0 )/(4.0*M_PI);
 
-  //calculate the mean optical depth over frequencies
-        double tau = 0.0;
-        for(short int f=0; f<numFreq; f++){
-          tau += it->get_n_HI() * UNIT_D * aver_neigh_dist * UNIT_L * cross_H[f] * straight_correction_factor;
+      //calculate the mean optical depth over frequencies
+      double tau = 0.0;
+      for(short int f=0; f<numFreq; f++){
+	    tau += it->get_n_HI() * UNIT_D * it->get_neigh_dist() * UNIT_L * cross_H[f] * straight_correction_factor;
+        if (dust) {
+          vector<double> freq_bounds = calc_freq_bounds(1., 1.e2);
+          double lambda = speed_of_light/(pow(10., (log10(freq_bounds[f]) + log10(freq_bounds[f+1]))/2.)*nu0HI);
+          double initial_coldens_H = (it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2()) * UNIT_D * it->get_neigh_dist() * UNIT_L;
+          tau += sigma_dust_combined_func(lambda)*initial_coldens_H*straight_correction_factor;
         }
-        tau /= numFreq;
+      }
+      if (fuvprop) {
+        // effective tau for hydrogen self-absorption, from Draine & Bertoldi 1996
+        // assumption is that the Doppler broadening parameter is related to the
+        // thermal motion (internal energy), times the turbulence
+        double b5 = sqrt(2.*it->get_internalEnergy())/1e5 * it->get_turbulence();
+        double x = it->get_n_H2() * UNIT_D / (5e14);
+        tau += -log( 0.965*pow(1.+x/b5, -2) + 0.035/sqrt(1.+x)*exp(-8.5e-4 * sqrt(1.+x)) );
+        if (dust)
+          tau += ( it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2() ) * UNIT_D * it->get_neigh_dist() * UNIT_L * sigma_dust_fuv * straight_correction_factor;
+      }
+      tau /= numFreq + fuvprop;
 
   //if optical depth is smaller than the switch set by user, switch from
   //ballistic to direction conserving
@@ -3949,9 +4179,11 @@ void SimpleX::store_site_properties(){
           total_flux += (double) it->get_flux(f);
         }
         temp.set_flux( (float) total_flux );
+        temp.set_fuv_flux( (float) it->get_fuv_flux() );
 
       }else{
         temp.set_flux( 0.0 );
+        temp.set_fuv_flux( 0.0 );
       }
 
       //test whether it's better to send atoms instead 
@@ -4640,7 +4872,7 @@ void SimpleX::send_intensities(){
 
       for( unsigned int j=0; j<numPixels; j++ ){
 	//loop over frequencies
-	for(short int f=0; f<numFreq;f++){
+	for(short int f=0; f<numFreq+fuvprop;f++){
 	  //if the site holds intensity, it needs to be send 
 	  if( sites[index].get_intensityIn( f,j ) > 0.0 || sites[index].get_intensityOut( f,j ) > 0.0  ){
 
@@ -5342,12 +5574,12 @@ void SimpleX::send_site_ballistics( const vector< unsigned long int >& sites_to_
 	    site_it->set_ballistic(1);
 
 	    //delete the intensity arrays
-	    site_it->delete_intensityOut(numFreq);
-	    site_it->delete_intensityIn(numFreq);
+	    site_it->delete_intensityOut(numFreq+fuvprop);
+	    site_it->delete_intensityIn(numFreq+fuvprop);
 
 	    //create new intensity arrays with correct size
-	    site_it->create_intensityIn( numFreq, site_it->get_numNeigh() );
-	    site_it->create_intensityOut( numFreq, site_it->get_numNeigh() );
+	    site_it->create_intensityIn( numFreq+fuvprop, site_it->get_numNeigh() );
+	    site_it->create_intensityOut( numFreq+fuvprop, site_it->get_numNeigh() );
 
 	    //create new straight array
 	    site_it->delete_straight();
@@ -5375,12 +5607,12 @@ void SimpleX::send_site_ballistics( const vector< unsigned long int >& sites_to_
 	  site_it->set_ballistic( 0 );
 
 	  //delete the intensity arrays
-	  site_it->delete_intensityOut(numFreq);
-	  site_it->delete_intensityIn(numFreq);
+	  site_it->delete_intensityOut(numFreq+fuvprop);
+	  site_it->delete_intensityIn(numFreq+fuvprop);
 
 	  //create new intensity arrays with correct size
-	  site_it->create_intensityIn( numFreq, number_of_directions );
-	  site_it->create_intensityOut( numFreq, number_of_directions );
+	  site_it->create_intensityIn( numFreq+fuvprop, number_of_directions );
+	  site_it->create_intensityOut( numFreq+fuvprop, number_of_directions );
 
 	  //straight array no longer needed
 	  //site_it->delete_straight();
@@ -5595,9 +5827,9 @@ void SimpleX::send_site_intensities(){
   vector<float> tmp = site_intensities;
     
   for( unsigned int i=0; i<permutation.size(); i++ ){
-    unsigned int posOld = i*numFreq*numPixels;
-    unsigned int posNew = permutation[i]*numFreq*numPixels;
-    for( unsigned short int j=0; j<numFreq*numPixels; j++ ){
+    unsigned int posOld = i*(numFreq+fuvprop)*numPixels;
+    unsigned int posNew = permutation[i]*(numFreq+fuvprop)*numPixels;
+    for( unsigned short int j=0; j<(numFreq+fuvprop)*numPixels; j++ ){
       site_intensities[ posOld + j ] = tmp[ posNew + j ];
     }
   } 
@@ -5637,13 +5869,13 @@ void SimpleX::send_site_intensities(){
           //loop over directions
           for( unsigned int j=0; j<numPixels; j++ ){
             //loop over frequencies
-            for(short int f=0; f<numFreq; f++){
+            for(short int f=0; f<numFreq+fuvprop; f++){
               Send_Intensity tmpSend;
               tmpSend.set_process( it->get_process() );
               tmpSend.set_neighId( j );
               tmpSend.set_freq_bin( f );
               tmpSend.set_id( intens_ids[intensityIndex] );
-              unsigned int pos = intensityIndex*numPixels*numFreq + j*numFreq + f;
+              unsigned int pos = intensityIndex*numPixels*(numFreq+fuvprop) + j*(numFreq+fuvprop) + f;
               tmpSend.set_intensityIn( site_intensities[ pos ] );
 
               intensitiesToSend.push_back( tmpSend );
@@ -5759,11 +5991,11 @@ void SimpleX::send_site_intensities(){
     intens_ids.push_back( index );
 
     //create space for the frequencies
-    site_intensities.insert( site_intensities.end(), numFreq*numPixels, 0.0 );
+    site_intensities.insert( site_intensities.end(), (numFreq+fuvprop)*numPixels, 0.0 );
 
-    for(unsigned int j=0; j<numPixels*numFreq; j++){
+    for(unsigned int j=0; j<numPixels*(numFreq+fuvprop); j++){
 
-      unsigned int pos = it2->get_freq_bin() + it2->get_neighId()*numFreq + site_intensities.size() - numFreq*numPixels;
+      unsigned int pos = it2->get_freq_bin() + it2->get_neighId()*(numFreq+fuvprop) + site_intensities.size() - (numFreq+fuvprop)*numPixels;
           
       //check to be sure
       if( it2->get_id() != index ){
@@ -5866,8 +6098,7 @@ void SimpleX::initialise_physics_params() {
   UNIT_V = pow(UNIT_L, 3.0);
 
   //read in metal line cooling data 
-  if(metal_cooling)
-    read_metals();
+  read_metals();
   
   if( COMM_RANK == 0 )
     simpleXlog << "  Essential physical parameters calculated " << endl;
@@ -5931,6 +6162,26 @@ void SimpleX::read_metals(){
     //cerr << "  Metal line cooling curves initialized " << endl;
   }
 
+
+
+/*
+  // Auxiliary values handy for CO chemistry, precomputed
+
+  // Maximum fraction of C and O atoms that can be locked up in CO
+  xCO_max = 2.*( abundances[2] > abundances[5] ? abundances[5] : abundances[2] )/(abundances[2] + abundances[5]);
+  // Mass fractions of H, C and O, neglecting other species
+  if (carbmonox) {
+    rho_frac_H = (1. - abundances[2] - abundances[5])/(1. + abundances[2]*11. + abundances[5]*15.);
+    rho_frac_C = 12.*abundances[2]/(1. + abundances[2]*11. + abundances[5]*15.);
+    rho_frac_O = 16.*abundances[5]/(1. + abundances[2]*11. + abundances[5]*15.);
+  }
+  else {
+    rho_frac_H = 1.;
+    rho_frac_C = 0.;
+    rho_frac_O = 0.;
+  }
+*/
+
   return;
 }
 
@@ -5950,6 +6201,14 @@ void SimpleX::assign_read_properties(){
         it->set_n_HI( temp_n_HI_list[ it->get_vertex_id() ] );
   //set ionised fraction
         it->set_n_HII( temp_n_HII_list[ it->get_vertex_id() ] );
+  //set molecular fraction
+        it->set_n_H2( temp_n_H2_list[ it->get_vertex_id() ] );
+  //set CO fraction
+        it->set_n_CO( temp_n_CO_list[ it->get_vertex_id() ] );
+  //set C+ fraction
+        it->set_n_C( temp_n_C_list[ it->get_vertex_id() ] );
+  //set OI fraction
+        it->set_n_O( temp_n_O_list[ it->get_vertex_id() ] );
   //set internal energy
         it->set_internalEnergy( temp_u_list[ it->get_vertex_id() ] );
   //set temperature
@@ -5963,8 +6222,11 @@ void SimpleX::assign_read_properties(){
         //metallicity
         it->set_metallicity( temp_metallicity_list[it->get_vertex_id() ] );
 
+        //turbulence
+        it->set_turbulence( temp_turbulence_list[it->get_vertex_id() ] );
+
   //set number of ionising photons
-        if(temp_flux_list[ it->get_vertex_id() ] > 0.0){
+        if(temp_flux_list[ it->get_vertex_id() ] > 0.0 || temp_fuv_flux_list[ it->get_vertex_id() ] > 0.0){
 
     //site is source
           it->set_source(1);
@@ -5973,6 +6235,8 @@ void SimpleX::assign_read_properties(){
           it->create_flux(numFreq);
     //put total number of ionsing photons in first bin
           it->set_flux( 0, temp_flux_list[ it->get_vertex_id() ] );
+
+          it->set_fuv_flux( temp_fuv_flux_list[ it->get_vertex_id() ] );
         }else{
     //site is no source
           it->set_source(0);
@@ -5981,10 +6245,15 @@ void SimpleX::assign_read_properties(){
       }else{
         it->set_n_HI( 0.0 );
         it->set_n_HII( 0.0 );
+        it->set_n_H2( 0.0 );
+        it->set_n_CO( 0.0 );
+        it->set_n_C( 0.0 );
+        it->set_n_O( 0.0 );
         it->set_source( 0 );
         it->set_internalEnergy( 0.0 );
         it->set_temperature( 0.0 );
         it->set_metallicity( 0.0 );
+        it->set_turbulence( 0.0 );
       }
     }
   }
@@ -6004,8 +6273,18 @@ void SimpleX::assign_read_properties(){
   vector< float >().swap( temp_n_HI_list );
   temp_n_HII_list.clear();
   vector< float >().swap( temp_n_HII_list );
+  temp_n_H2_list.clear();
+  vector< float >().swap( temp_n_H2_list );
+  temp_n_CO_list.clear();
+  vector< float >().swap( temp_n_CO_list );
+  temp_n_C_list.clear();
+  vector< float >().swap( temp_n_C_list );
+  temp_n_O_list.clear();
+  vector< float >().swap( temp_n_O_list );
   temp_flux_list.clear();
   vector< float >().swap( temp_flux_list );
+  temp_fuv_flux_list.clear();
+  vector< float >().swap( temp_fuv_flux_list );
   temp_u_list.clear();
   vector< float >().swap( temp_u_list );
   temp_dudt_list.clear();
@@ -6014,6 +6293,8 @@ void SimpleX::assign_read_properties(){
   vector< float >().swap( temp_clumping_list );
   temp_metallicity_list.clear();
   vector< float >().swap( temp_metallicity_list );
+  temp_turbulence_list.clear();
+  vector< float >().swap( temp_turbulence_list );
 
   if( COMM_RANK == 0 ){
     simpleXlog << "  Assigned number density and flux to sites " << endl;
@@ -6041,20 +6322,26 @@ void SimpleX::return_physics(){
 	  //assign properties
 	  it->set_n_HI( site_properties[ i ].get_n_HI() );
 	  it->set_n_HII( site_properties[ i ].get_n_HII() ); 
+	  it->set_n_H2( site_properties[ i ].get_n_H2() ); 
+	  it->set_n_CO( site_properties[ i ].get_n_CO() );
+	  it->set_n_C( site_properties[ i ].get_n_C() ); 
+	  it->set_n_O( site_properties[ i ].get_n_O() ); 
 	  it->set_ballistic( site_properties[ i ].get_ballistic() );
 	  it->set_internalEnergy( site_properties[ i ].get_internalEnergy() );
 	  it->set_dinternalEnergydt( site_properties[ i ].get_dinternalEnergydt() );
     it->set_metallicity( site_properties[ i ].get_metallicity() );
+    it->set_turbulence( site_properties[ i ].get_turbulence() );
 	  //set temperature
     double mu = compute_mu( *it );
     float T = static_cast<float>( u_to_T( it->get_internalEnergy(),  mu ) );
     it->set_temperature( T );
   	
 	  //if site is source, put flux in first bin
-	  if( site_properties[ i ].get_flux() > 0.0 ){
+	  if( site_properties[ i ].get_flux() > 0.0 || site_properties[ i ].get_fuv_flux() > 0.0 || (fuvprop && site_properties[ i ].get_surface() > 0.0)){
 	    it->set_source(1);
 	    it->create_flux(numFreq);
 	    it->set_flux( 0, site_properties[ i ].get_flux() );
+        it->set_fuv_flux( site_properties[ i ].get_fuv_flux() );
  
 	  }else{
 	    it->set_source(0);
@@ -6377,7 +6664,6 @@ void SimpleX::black_body_source(const double& tempSource) {
   }
  
   //***** Determine excess energy of the photons ******//
-
   //give photon excess energy vector correct size
   photon_excess_energy.resize(numFreq, 0.0);
 
@@ -6423,7 +6709,8 @@ void SimpleX::output_number_of_atoms() {
     if( !it->get_border() && it->get_process() == COMM_RANK ){ 
       double N_HI  = (double) it->get_n_HI() * UNIT_D * (double) it->get_volume() * UNIT_V;
       double N_HII = (double) it->get_n_HII() * UNIT_D * (double) it->get_volume() * UNIT_V;
-      atoms += N_HI + N_HII;  
+      double N_H2 = (double) it->get_n_H2() * UNIT_D * (double) it->get_volume() * UNIT_V;
+      atoms += N_HI + N_HII + 2.0*N_H2;  
     }
   }  
 
@@ -6442,11 +6729,27 @@ double SimpleX::output_optical_depth() {
   for( SITE_ITERATOR it=sites.begin(); it!=sites.end(); it++ ){
     if( !it->get_border() && it->get_process() == COMM_RANK ){ 
       //calculate the mean optical depth over frequencies
-      double tau=0.0;
+      double tau = 0.0;
       for(short int f=0; f<numFreq; f++){
-	tau += it->get_n_HI() * UNIT_D * it->get_neigh_dist() * UNIT_L * cross_H[f] * straight_correction_factor;
+	    tau += it->get_n_HI() * UNIT_D * it->get_neigh_dist() * UNIT_L * cross_H[f] * straight_correction_factor;
+        if (dust) {
+          vector<double> freq_bounds = calc_freq_bounds(1., 1.e2);
+          double lambda = speed_of_light/(pow(10., (log10(freq_bounds[f]) + log10(freq_bounds[f+1]))/2.)*nu0HI);
+          double initial_coldens_H = (it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2()) * UNIT_D * it->get_neigh_dist() * UNIT_L;
+          tau += sigma_dust_combined_func(lambda)*initial_coldens_H*straight_correction_factor;
+        }
       }
-      tau /= numFreq;
+      if (fuvprop) {
+        // effective tau for hydrogen self-absorption, from Draine & Bertoldi 1996
+        // assumption is that the Doppler broadening parameter is related to the
+        // thermal motion (internal energy), times the turbulence
+        double b5 = sqrt(2.*it->get_internalEnergy())/1e5 * it->get_turbulence();
+        double x = it->get_n_H2() * UNIT_D / (5e14);
+        tau += -log( 0.965*pow(1.+x/b5, -2) + 0.035/sqrt(1.+x)*exp(-8.5e-4 * sqrt(1.+x)) );
+        if (dust)
+          tau += ( it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2() ) * UNIT_D * it->get_neigh_dist() * UNIT_L *sigma_dust_fuv * straight_correction_factor;
+      }
+      tau /= numFreq + fuvprop;
       tau_tot += tau;
       count++;  
     }
@@ -6533,6 +6836,7 @@ double SimpleX::recombine(){
 
       double N_HI = (double) it->get_n_HI() * UNIT_D * (double) it->get_volume() * UNIT_V;
       double N_HII = (double) it->get_n_HII() * UNIT_D * (double) it->get_volume() * UNIT_V;
+      double N_H2 = (double) it->get_n_H2() * UNIT_D * (double) it->get_volume() * UNIT_V;
 
       //number of recombinations is this factor times recombination coefficient
       double num_rec_factor = (double) it->get_clumping() * N_HII * (double) it->get_n_HII() * UNIT_D * UNIT_T;
@@ -6540,6 +6844,27 @@ double SimpleX::recombine(){
       //number of recombinations
       double num_rec = (rec_rad) ? num_rec_factor*recomb_coeff_HII_caseA( it->get_temperature() ) 
         : num_rec_factor*recomb_coeff_HII_caseB( it->get_temperature() );
+
+      double G;
+      if (fuvprop) {
+        int numPixels = ( it->get_ballistic() ) ? it->get_numNeigh() : number_of_directions;
+        double N_in_total = 0.0;
+        for (int j = 0; j < numPixels; j++) {
+          N_in_total += (double) it->get_intensityOut( numFreq, j ) * UNIT_P;
+        }
+        // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
+        // to the 2/3 power. Together with straight_correction_factor, they allow for a good
+        // approximation for a cell's cross section
+        G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+      }
+      else {
+        G = interstellar_fuv_field;
+      }
+
+      if (dust) {
+        num_rec_factor = (double) it->get_clumping() * (N_HII + N_HI + 2.0*N_H2) * (double) it->get_n_HII() * UNIT_D * UNIT_T;
+        num_rec += num_rec_factor*recomb_coeff_HII_grain( it->get_temperature(), N_HII / ( (double) it->get_volume() * UNIT_V ), G, 0.5 );
+      }
 
       //make sure there are no more recombinations than ionised atoms
       if( num_rec > N_HII ) {
@@ -6583,11 +6908,25 @@ double SimpleX::recombine(){
       //add the recombinations to the sites
       N_HI += num_rec;
       N_HII -= num_rec;
+
+      if (molecular) {
+
+        //molecule formation
+        double num_form = N_HI * formation_coeff_H2_grain( it->get_temperature(), pow(G/stefan_boltzmann, 0.25) ) * ( (double) it->get_n_HI() + (double) it->get_n_HII() + 2. * (double) it->get_n_H2() ) * UNIT_D * UNIT_T;
+        if( num_form > 0.5*N_HI ){
+        num_form = 0.5*N_HI;
+        }
+
+        N_H2 += num_form;
+        N_HI -= 2.0*num_form;
+
+      }
       double tmp = N_HI/(UNIT_D * (double) it->get_volume() * UNIT_V);
       it->set_n_HI( (float) tmp );
       tmp = N_HII/(UNIT_D * (double) it->get_volume() * UNIT_V);
       it->set_n_HII( (float) tmp );
-
+      tmp = N_H2/(UNIT_D * (double) it->get_volume() * UNIT_V);
+      it->set_n_H2( (float) tmp );
     }
   } //for all vertices 
 
@@ -6605,11 +6944,38 @@ double SimpleX::cooling_rate( Site& site ){
   double n_HI = site.get_n_HI() * UNIT_D;
   //ionised hydrogen density
   double n_HII = site.get_n_HII() * UNIT_D;
+  //molecular hydrogen density
+  double n_H2 = site.get_n_H2() * UNIT_D;
   //total number density
-  double n_H = n_HI + n_HII;
+  double n_H = n_HI + n_HII + 2.0*n_H2;
+
+  //ionised carbon density
+  double n_C = site.get_n_C() * UNIT_D;
+  //atomic oxygen density
+  double n_O = site.get_n_O() * UNIT_D;
+  //carbon monoxide density
+  double n_CO = site.get_n_CO() * UNIT_D;
 
   //electron density is the same in case of hydrogen only
-  double n_e = n_HII;
+  double n_e = n_HII + n_C;
+
+  double G;
+
+  if (fuvprop) {
+    int numPixels = ( site.get_ballistic() ) ? site.get_numNeigh() : number_of_directions;
+    double N_in = 0.0;
+    for (int j = 0; j < numPixels; j++) {
+      N_in += (double) site.get_intensityOut( numFreq,j );
+    }
+    // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
+    // to the 2/3 power. Together with straight_correction_factor, they allow for a good
+    // approximation for a cell's cross section
+    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+  }
+  else {
+    G = interstellar_fuv_field;
+  }
+
 
   //recombination cooling
   if(rec_rad){
@@ -6617,7 +6983,6 @@ double SimpleX::cooling_rate( Site& site ){
   }else{
     C += recomb_cooling_coeff_HII_caseB( site.get_temperature() ) * n_e * n_HII * site.get_clumping();;
   }
-
 
 
   //collisional ionisation cooling
@@ -6667,7 +7032,30 @@ double SimpleX::cooling_rate( Site& site ){
     //   exit(-1);
     // }
   }
-  
+
+
+  if (dust) {
+    C += recomb_cooling_coeff_HII_grain( n_e, site.get_temperature(), 0.5, G ) * n_e * n_H;
+
+    double tempDust = pow( G/stefan_boltzmann , 0.25);
+    C += grain_transfer_cooling_coeff( n_H, site.get_temperature(), tempDust, 1e-6 );
+  }
+
+  if (molecular) {
+    C += H2_coll_dissoc_cooling_coeff( n_H, n_H2, n_HI, site.get_temperature() ) * n_H2;
+
+    C += H2_cooling_coeff( site.get_temperature(), n_H ) * n_H2;
+  }  
+
+  if (carbmonox) {
+
+    double rho = (n_H + 12.*n_C + 16.*n_O + 28.*n_CO)*m_H;
+    double t_ff = pow(rho*G_newton, -0.5);
+
+    C += CO_cooling_coeff( n_H, n_H2, n_CO, site.get_temperature(), t_ff, site.get_turbulence()) * n_CO;
+  }
+
+
   //total cooling rate in cell
   double cooling = C * site.get_volume() * UNIT_V;
 
@@ -6677,21 +7065,69 @@ double SimpleX::cooling_rate( Site& site ){
 }
 
 //rate of energy gain inside cell
-double SimpleX::heating_rate( const vector<double>& N_ion, const double& t_end ){
+double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const double& t_end ){
 
   //normalised heating function H = n_HI * Gamma * E/n_H^2
   //total heating in this cell is heating = n_H^2 * V * H,
   //which is given here
 
+  //normalised heating function
+  double H = 0.0;
+  //neutral hydrogen density
+  double n_HI = site.get_n_HI() * UNIT_D;
+  //ionised hydrogen density
+  double n_HII = site.get_n_HII() * UNIT_D;
+  //molecular hydrogen density
+  double n_H2 = site.get_n_H2() * UNIT_D;
+  //total number density
+  double n_H = n_HI + n_HII + 2.0*n_H2;
+
+  double G;
+
+  if (fuvprop) {
+    int numPixels = ( site.get_ballistic() ) ? site.get_numNeigh() : number_of_directions;
+    double N_in = 0.0;
+    for (int j = 0; j < numPixels; j++) {
+      N_in += (double) site.get_intensityOut( numFreq,j );
+    }
+    // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
+    // to the 2/3 power. Together with straight_correction_factor, they allow for a good
+    // approximation for a cell's cross section
+    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+  }
+  else {
+    G = interstellar_fuv_field;
+  }
+
+  H += cosmic_ray_heating_coeff(cosmic_ray_ionization_rate) * n_HI;
+
+  if (dust) {
+    H += photoelectric_heating_coeff( n_HII , site.get_temperature(), 0.5, G ) * n_H;
+  }
+
+
+  if (molecular) {
+    double dens_cr = critical_density( n_HI/n_H, 2.*n_H2/n_H, site.get_temperature() );
+  
+    if ( n_H2 > 0.0 ) {
+      H += H2_photodissocation_heating_coeff( G ) * n_H2;
+
+      H += H2_pumping_heating_coeff( n_H, dens_cr, G ) * n_H2;
+    }
+
+    double tempDust = pow( G/stefan_boltzmann, 0.25);
+
+    H += H2_formation_heating_coeff( n_H, site.get_temperature(), dens_cr, tempDust );
+  }
+
+
   //energy gain
-  double heating = 0.0;
+  double heating = H * site.get_volume() * UNIT_V;
 
   //loop over frequencies
   for( short int f=0; f<numFreq; f++ ){
-  
     //number of photons per second
     double N_ion_sec = N_ion[f]/t_end;
-
     //heating due to these photons
     heating += N_ion_sec * photon_excess_energy[f];
   }
@@ -6702,7 +7138,8 @@ double SimpleX::heating_rate( const vector<double>& N_ion, const double& t_end )
 
 double SimpleX::compute_mu(Site& site){
   
-  double mu = ( site.get_n_HI() + site.get_n_HII() )/(site.get_n_HI() + 2*site.get_n_HII() );
+  //double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() );
+  double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() + site.get_n_CO() + site.get_n_C() + site.get_n_O() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() + site.get_n_CO()/28. + site.get_n_C()/12. + site.get_n_O()/16. );
   
   return mu;
   
@@ -6746,17 +7183,18 @@ double SimpleX::update_temperature( Site& site, const vector<double>& N_ion, con
   double t_heat = t_end;
 
   //mean molecular weight
-  double mu = ( site.get_n_HI() + site.get_n_HII() )/(site.get_n_HI() + 2*site.get_n_HII() );
+  //double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2());
+  double mu = compute_mu(site);
 
   double u_min = T_to_u( T_min, mu);
   double u_max = T_to_u( T_max, mu);
 
   //number of hydrogen atoms
-  double N_H = ( site.get_n_HI() + site.get_n_HII() ) * UNIT_D * site.get_volume() * UNIT_V;
+  double N_H = ( site.get_n_HI() + site.get_n_HII() + 2.0*site.get_n_H2() ) * UNIT_D * site.get_volume() * UNIT_V;
 
   //inclusion of adiabatic cooling term from hydro
   double duDtAdiabatic = site.get_dinternalEnergydt();
-  
+
   //divide this by the internal energy to obtain a constant quantity
   //double u_0 = site.get_internalEnergy();
 
@@ -6770,11 +7208,11 @@ double SimpleX::update_temperature( Site& site, const vector<double>& N_ion, con
     double u = site.get_internalEnergy();
 
     //total heating inside this cell per second
-    double H = heating_rate( N_ion, t_end );
+    double H = heating_rate( site, N_ion, t_end );
 
     //total cooling inside this cell per second
     double C = cooling_rate( site ); 
-        
+
     //change in internal energy per second per unit mass
     double du = duDtAdiabatic + (H - C)/(N_H * m_H);
     // removed *u
@@ -6854,7 +7292,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   static int count = 0;
   
   //calculate number density and optical depth at beginning of time step
-  double n_H = ( (double) site.get_n_HI() + (double) site.get_n_HII() ) * UNIT_D;
+  double n_H = ( (double) site.get_n_HI() + (double) site.get_n_HII() + 2.0*((double) site.get_n_H2())) * UNIT_D;
 
   vector<double> initial_tau(numFreq,0.0); 
   for(short int f=0; f<numFreq;f++){
@@ -6867,12 +7305,19 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   }
 
   //total number of incoming and outgoing photons
-  vector<double> N_in_total(numFreq, 0.0);
-  vector<double> N_out_total(numFreq, 0.0);
+  vector<double> N_in_total(numFreq+1, 0.0);
+  vector<double> N_out_total(numFreq+1, 0.0);
 
   //number of neutral and ionised atoms in the cell
   double initial_N_HI = (double) site.get_n_HI() * UNIT_D * (double) site.get_volume() * UNIT_V;
   double initial_N_HII = (double) site.get_n_HII() * UNIT_D * (double) site.get_volume() * UNIT_V;
+  double initial_N_H2 = (double) site.get_n_H2() * UNIT_D * (double) site.get_volume() * UNIT_V;
+
+  double initial_coldens_H = ( (double) site.get_n_HI() + (double) site.get_n_HII() + 2.*((double) site.get_n_H2()) ) * UNIT_D * site.get_neigh_dist() * UNIT_L;
+
+  double initial_N_C = (double) site.get_n_C() * UNIT_D * (double) site.get_volume() * UNIT_V;
+  double initial_N_O = (double) site.get_n_O() * UNIT_D * (double) site.get_volume() * UNIT_V;
+  double initial_N_CO = (double) site.get_n_CO() * UNIT_D * (double) site.get_volume() * UNIT_V;
 
   //in case of ballistic transport, intensity has size of number of neighbours;
   //in case of direction conserving transport, intensity has 
@@ -6885,15 +7330,18 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       //incoming intensity in physical units
       N_in_total[f] += (double) site.get_intensityOut( f,j ) * UNIT_I;
     } //for all freqs
+    if (fuvprop) {
+      N_in_total[numFreq] += (double) site.get_intensityOut( numFreq,j ) * UNIT_P;
+    }
   } //for all neighbours
 
   //if rho is zero, no need to go into loop
   if(n_H == 0.0){
-    for(short int f=0; f<numFreq;f++){
+    for(short int f=0; f<numFreq+fuvprop;f++){
       N_out_total[f] = N_in_total[f];
     }
   } else {//this loop is only useful if there is gas in the cell
-    
+
     // NOTE: if there are no collisional ionizations, this loop is only useful if there is radiation!
 
     //calculate the number of absorptions and ionisations if N_HI and N_HII were constant during RT time step
@@ -6911,19 +7359,58 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       if(initial_photo_ionisations != initial_photo_ionisations ){
       	cerr << initial_photo_ionisations << " " << initial_N_retained_H[f] << " " << initial_tau[f] << " " << N_in_total[f] << endl;
       }
-
     }
 
     //total number of collisional ionisations in this time step
     double initial_coll_ionisations = 0.0;
     if(coll_ion){
-      double n_e = (double) site.get_n_HII() * UNIT_D;
+      double n_e = ((double) site.get_n_HII() + (double) site.get_n_C() ) * UNIT_D;
       //number of coll ionisations is coll ion coeff * n_e * number of atoms * time step
       initial_coll_ionisations = coll_ion_coeff_HI( site.get_temperature() ) * n_e * initial_N_HI * UNIT_T;
     }
 
+    //total number of cosmic ray ionisations in this time step
+    double initial_cosmic_ionisations = 0.0;
+    initial_cosmic_ionisations = cosmic_ray_ionization_rate * initial_N_HI * UNIT_T;
+
     //the initial ionisations without accounting for the number of neutral atoms
-    double initial_numIonised = initial_photo_ionisations + initial_coll_ionisations;
+    double initial_numIonised = initial_photo_ionisations + initial_coll_ionisations + initial_cosmic_ionisations;
+
+
+
+    //absorptions by molecular hydrogen
+    double G;
+    if (fuvprop) {
+      // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
+      // to the 2/3 power. Together with straight_correction_factor, they allow for a good
+      // approximation for a cell's cross section
+      G = N_in_total[numFreq] / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+    }
+    else {
+      G = interstellar_fuv_field;
+    }
+
+    double initial_photo_dissociations = 0.;
+
+    double dens_cr = critical_density( initial_N_HI/( n_H * site.get_volume() * UNIT_V ), 2.*initial_N_H2/( n_H * site.get_volume() * UNIT_V ), site.get_temperature() );
+
+    double initial_HI_collisional_dissociations = 0.;
+
+    double initial_H2_collisional_dissociations = 0.;
+
+    if (molecular) {
+      initial_photo_dissociations = photodissoc_coeff_H2( G ) * initial_N_H2 * UNIT_T;
+
+      initial_HI_collisional_dissociations = dissoc_coeff_H_atom( n_H, site.get_temperature(), dens_cr ) * (double) site.get_n_HI() * UNIT_D * initial_N_H2 * UNIT_T;
+
+      initial_H2_collisional_dissociations = dissoc_coeff_H_molecule( n_H, site.get_temperature(), dens_cr ) * (double) site.get_n_H2() * UNIT_D * initial_N_H2 * UNIT_T;
+    }
+
+    double initial_numDissociated = initial_photo_dissociations + initial_HI_collisional_dissociations + initial_H2_collisional_dissociations;
+
+
+    //absorptions by carbon monoxide
+    double initial_CO_photo_dissociations = dissoc_coeff_CO (G) * initial_N_CO * UNIT_T;
 
     //use temporal photon condervation or not?
     unsigned long int Nsteps = 1;
@@ -6939,10 +7426,37 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
       //recombination time scale, if no recombinations it is taken to be much larger than time step
       double t_rec = (tot_ions > 0.0 ) ? ( site.get_volume() * pow( UNIT_L, 3.0 ) )/
-	( tot_ions * site.get_clumping() * recomb_coeff_HII_caseB( site.get_temperature() ) ) : 1.e5 * UNIT_T;
+	( tot_ions * site.get_clumping() * (recomb_coeff_HII_caseB( site.get_temperature() ) + dust*recomb_coeff_HII_grain( site.get_temperature(), tot_ions/(site.get_volume() * UNIT_V), G, 0.5 )) ) : 1.e5 * UNIT_T;
+
+      //molecular hydrogen formation timescale
+      double t_form = site.get_n_HI() > 0.0 ? 1.0/( ((double) site.get_n_HI() + (double) site.get_n_HII() + 2.* (double) site.get_n_H2()) * UNIT_D * formation_coeff_H2_grain( site.get_temperature(), pow(G/stefan_boltzmann, 0.25) )) : 1.e5 * UNIT_T;
+
+      //molecular hydrogen dissociation timescale
+      double t_dissoc = G > 0.0 ? 1.0 / photodissoc_coeff_H2( G ) : 1.e5 * UNIT_T;
+
+      double t_mol_eq = t_form*t_dissoc/(t_form + t_dissoc);
 
       //'equality' time scale
       double t_eq = t_ion*t_rec/(t_ion + t_rec);
+
+      //pick the shortest of the molecular and atomic equality times
+      if (molecular && t_eq > t_mol_eq)
+        t_eq = t_mol_eq;
+
+
+      if (carbmonox) {
+      //carbon monoxide timescales
+        double t_form_CO = site.get_n_CO() > 0.0 ? 1./( ((double) site.get_n_HI() + (double) site.get_n_HII() + 2.* (double) site.get_n_H2()) * UNIT_D * formation_coeff_CO( ((double) site.get_n_HI() + (double) site.get_n_HII() + 2.* (double) site.get_n_H2()) * UNIT_D, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G ) ) : 1.e5 * UNIT_T;
+
+        double t_dissoc_CO = G > 0.0 ? 1.0 / dissoc_coeff_CO ( G ) : 1.e5 * UNIT_T;
+
+        double t_eq_CO = t_form_CO*t_dissoc_CO/(t_form_CO + t_dissoc_CO);
+
+        if (t_eq > t_eq_CO)
+          t_eq = t_eq_CO;
+      }
+
+
 
       if(t_eq != t_eq){
         cerr << endl << " (" << COMM_RANK << ") NAN detected! t_eq: " << t_eq << " t_ion: " << t_ion << " t_rec: " << t_rec << endl;
@@ -6974,30 +7488,44 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       vector<double> number_of_photo_ionisations(numFreq, 0.0);
       double number_of_recombinations = 0.0;
 
+      double number_of_photo_dissociations = 0.0;
+      double number_of_CO_photo_dissociations = 0.0;
+
       //total number of diffuse recombination photons during this time step
       double N_rec_phot = 0.0;
 
       //number of neutral and ionised atoms during subcycle step
       double N_HI_step = initial_N_HI;
       double N_HII_step = initial_N_HII;
+      double N_H2_step = initial_N_H2;
+
+      double N_C_step = initial_N_C;
+      double N_O_step = initial_N_O;
+      double N_CO_step = initial_N_CO;
 
       //time step during subcycle step
       double dt_ss = UNIT_T/(double) Nsteps;
 
       //number of ionisation in subcycle step
       double numIonised_step = initial_numIonised;
+      double numDissociated_step = initial_numDissociated;
+
+      double num_form;
+      double num_form_CO;
 
       //effective time step in calculations of ionised atoms
       double dt_eff = dt_ss/UNIT_T;
       //one over the initial neuatral atoms
       double one_over_initial_N_HI = (initial_N_HI > 0.0 ) ? 1.0/initial_N_HI : 1.0;
+      //one over the initial molecules
+      double one_over_initial_N_H2 = (initial_N_H2 > 0.0 ) ? 1.0/initial_N_H2 : 1.0;
       //one over the physical volume
       double one_over_volume = 1.0/( site.get_volume() * UNIT_V );
       //convert number of atoms to number density in code units
       double num_to_dens = 1.0/( UNIT_D * site.get_volume() * UNIT_V ); 
 
       //optical depth in time step
-      vector<double> tau_step(numFreq,0.0);
+      vector<double> tau_step(numFreq+fuvprop,0.0);
       //number of ionisations in time step
       vector<double> photo_ionisations_step(numFreq,0.0);
 
@@ -7012,6 +7540,78 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	}
 
 	time_passed += dt_ss;
+
+
+    double total_photo_dissociations_step = 0.0;
+
+
+    double numCODissociated_step = 0.0;
+    if (carbmonox) {
+       numCODissociated_step = N_CO_step * dissoc_coeff_CO ( G ) * dt_ss;
+
+      if ( numCODissociated_step > N_CO_step){
+        cerr << " Warning, subcycle step too large: numDissociated: " << numCODissociated_step << " N_CO_step: " << N_CO_step << endl;
+        numCODissociated_step = N_CO_step;
+      }
+
+      N_CO_step -= numCODissociated_step;
+      N_C_step += numCODissociated_step;
+      N_O_step += numCODissociated_step;
+
+      number_of_CO_photo_dissociations += numCODissociated_step;
+
+      num_form_CO = N_C_step * formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
+
+      if (num_form_CO > N_C_step || num_form_CO > N_O_step) {
+        cerr << " Warning, subcycle step too large: num_form: " << num_form_CO << " N_C_step: " << N_C_step << " N_O_step: " << N_O_step << endl;
+        num_form_CO = N_C_step > N_O_step ? N_O_step : N_C_step;
+      }
+
+      N_CO_step += num_form_CO;
+      N_C_step -= num_form_CO;
+      N_O_step -= num_form_CO;
+    }
+
+
+
+    if (molecular) {
+      total_photo_dissociations_step = N_H2_step * photodissoc_coeff_H2( G ) * dt_ss;
+
+      numDissociated_step = total_photo_dissociations_step;
+
+
+      dens_cr = critical_density( N_HI_step/( n_H * (double) site.get_volume() * UNIT_V ), 2.*N_H2_step/( n_H * (double) site.get_volume() * UNIT_V ), (double) site.get_temperature() );
+
+      numDissociated_step += dissoc_coeff_H_atom( n_H, (double) site.get_temperature(), dens_cr ) * N_HI_step * one_over_volume * initial_N_H2 * dt_ss;
+
+      numDissociated_step += dissoc_coeff_H_molecule( n_H, (double) site.get_temperature(), dens_cr ) * N_H2_step * one_over_volume * initial_N_H2 * dt_ss;
+
+
+      if ( numDissociated_step > N_H2_step){
+        cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
+        numDissociated_step = N_H2_step;
+      }
+
+
+
+      N_H2_step -= numDissociated_step;
+      N_HI_step += 2.0*numDissociated_step;
+
+
+      num_form = N_HI_step * formation_coeff_H2_grain( (double) site.get_temperature(), pow(G/stefan_boltzmann, 0.25) ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
+
+      if (num_form > 0.5*N_HI_step) {
+        cerr << " Warning, subcycle step too large: num_form: " << num_form << " N_HI_step: " << N_HI_step << endl;
+        num_form = 0.5*N_HI_step;
+      }
+
+      N_H2_step += num_form;
+      N_HI_step -= 2.0*num_form;
+
+      number_of_photo_dissociations += total_photo_dissociations_step;
+
+    }
+
 	
 	double total_photo_ionisations_step = 0.0;
 	for(short int f=0; f<numFreq; f++){
@@ -7034,7 +7634,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	    MPI_Abort(MPI_COMM_WORLD, -1);
 	  }
 	}
-	
+
 	//number of collisional ionisations in this step
 	double coll_ionisations_step = 0.0;
 	if(coll_ion){
@@ -7042,7 +7642,11 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	  coll_ionisations_step = coll_ion_coeff_HI( site.get_temperature() ) * N_HII_step * one_over_volume * N_HI_step * dt_ss;
 	}
 
-	numIonised_step = total_photo_ionisations_step + coll_ionisations_step;
+    //number of cosmic ray ionisations in this step
+    double cosmic_ionisations_step = 0.0;
+    cosmic_ionisations_step = cosmic_ray_ionization_rate * N_HI_step * dt_ss;
+
+	numIonised_step = total_photo_ionisations_step + coll_ionisations_step + cosmic_ionisations_step;
 
 	if( numIonised_step > N_HI_step){
 	  cerr << " Warning, subcycle step too large: numIonised: " << numIonised_step << " N_HI_step: " << N_HI_step << endl;
@@ -7065,6 +7669,9 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   double num_rec = (rec_rad) ? num_rec_factor*recomb_coeff_HII_caseA( site.get_temperature() ) 
     : num_rec_factor*recomb_coeff_HII_caseB( site.get_temperature() );
 
+  if (dust && N_HII_step > 0.) {
+    num_rec += num_rec_factor/N_HII_step*(N_HII_step + N_HI_step + 2.0*N_H2_step)*recomb_coeff_HII_grain(site.get_temperature(), N_HII_step * one_over_volume, G, 0.5);
+  }
 
   //number of diffuse recombination photons in this subcycle step
   double N_rec_phot_step = 0.0;
@@ -7140,18 +7747,29 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	N_HII_step -= num_rec;
 
 	//update the site for temperature calculation
-	double tmp = N_HI_step * num_to_dens;
+	double tmp = N_HI_step * num_to_dens; 
 	site.set_n_HI( (float) tmp );
 	tmp = N_HII_step * num_to_dens;
 	site.set_n_HII( (float) tmp );
+    tmp = N_H2_step * num_to_dens;
+    site.set_n_H2( (float) tmp );
+    if (carbmonox) {
+      tmp = N_C_step * num_to_dens;
+      site.set_n_C( (float) tmp );
+      tmp = N_O_step * num_to_dens;
+      site.set_n_O( (float) tmp );
+      tmp = N_CO_step * num_to_dens;
+      site.set_n_CO( (float) tmp );
+    }
 
 	//update temperature	
 	double t_heat = 0.0;
 	if(heat_cool){
-	  
+  
 	  t_heat = update_temperature( site, photo_ionisations_step, dt_ss);
 
 	}else{
+
 	  //if gas gets ionised set temperature to gasIonTemp
 	  if( (double) site.get_n_HII()/n_H > 0.1){
 	    site.set_temperature( gasIonTemp );
@@ -7161,7 +7779,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	}
 
 	//if photoionisation equilibrium is reached, no need to recalculate these
-	if( fabs(numIonised_step - num_rec)/num_rec < 1e-5 && (int) i < (int) (Nsteps-2) ){
+	if( fabs(numIonised_step - num_rec)/num_rec < 1e-5 && ( !molecular || fabs(numDissociated_step - num_form)/num_form < 1e-5 ) && (int) i < (int) (Nsteps-2) ){
 
 	  //number of steps left to take
 	  unsigned int Nleft = Nsteps - i - 1;
@@ -7201,7 +7819,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 		Gamma_c = coll_ion_coeff_HI( site.get_temperature() ) * (double) site.get_n_HII() * UNIT_D;
 	      }
 	      //total ionisation rate
-	      double Gamma = Gamma_H + Gamma_c;
+	      double Gamma = Gamma_H + Gamma_c + cosmic_ray_ionization_rate;
 	      //electron density times recombination coefficient
 	      double n_e_times_alpha=0.0;
   
@@ -7215,10 +7833,32 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
         }else{
           n_e_times_alpha = site.get_clumping()*recomb_coeff_HII_caseB( site.get_temperature() ) * site.get_n_HII() * UNIT_D;
         }
-                
+
+        if (dust) {
+          n_e_times_alpha += site.get_clumping()*recomb_coeff_HII_grain( site.get_temperature(), site.get_n_HII() * UNIT_D, G, 0.5 ) * (site.get_n_HII() + site.get_n_HI() + 2.*site.get_n_H2()) * UNIT_D;
+        }
+
+        if (molecular) {
+          double dens_cr = critical_density( N_HI_step/( n_H * site.get_volume() * UNIT_V ), 2.*N_H2_step/( n_H * site.get_volume() * UNIT_V ), site.get_temperature() );
+
+          double Gamma_c_H2 = dissoc_coeff_H_atom(site.get_temperature(), pow(G/stefan_boltzmann, 0.25), dens_cr) * (double) site.get_n_HI() * UNIT_D + 
+                          dissoc_coeff_H_molecule(site.get_temperature(), pow(G/stefan_boltzmann, 0.25), dens_cr) * (double) site.get_n_H2() * UNIT_D;
+
+	      N_HI_step  = n_e_times_alpha / Gamma * site.get_n_HII() * UNIT_D * site.get_volume() * UNIT_V;
+          N_H2_step  = formation_coeff_H2_grain( site.get_volume(), pow(G/stefan_boltzmann, 0.25) ) * N_HI_step * ( (double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2() ) * UNIT_D / ( Gamma_c_H2 + photodissoc_coeff_H2(G));
+	      N_HII_step = N_H - N_HI_step - N_H2_step;
+        }
+        else {                
 	      //equilibrium number of neutral and ionised atoms
 	      N_HI_step = n_e_times_alpha * N_H/( n_e_times_alpha + Gamma);
 	      N_HII_step = N_H - N_HI_step;
+        }
+
+        if (carbmonox) {
+          N_CO_step = n_H * abundances[2] / ( dissoc_coeff_CO ( G )/(formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G )*n_H) + 0.5) * site.get_volume() * UNIT_V;
+          N_C_step = n_H * abundances[2] * site.get_volume() * UNIT_V - N_CO_step;
+          N_O_step = n_H * abundances[5] * site.get_volume() * UNIT_V - N_CO_step;
+        }
 
         double N_rec_ion_eq = 0.0;
             //number of recombination photons
@@ -7245,6 +7885,16 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	      site.set_n_HI( (float) tmp );
 	      tmp = N_HII_step * num_to_dens;
 	      site.set_n_HII( (float) tmp );
+          tmp = N_H2_step * num_to_dens;
+          site.set_n_H2( (float) tmp );
+          if (carbmonox) {
+            tmp = N_C_step * num_to_dens;
+            site.set_n_C( (float) tmp );
+            tmp = N_O_step * num_to_dens;
+            site.set_n_O( (float) tmp );
+            tmp = N_CO_step * num_to_dens;
+            site.set_n_CO( (float) tmp );
+          }
 
 	      //keep track of photoionisations
 	      //photo_ionisations_step needs to stay constant, so make new vector
@@ -7274,6 +7924,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	    for(short int f=0; f<numFreq; f++){
 	      number_of_photo_ionisations[f] += photo_ionisations_step[f]*Nleft;//*t_left/dt_ss;//*Nleft;
 	    }
+        number_of_photo_dissociations += total_photo_dissociations_step*Nleft;
+        number_of_CO_photo_dissociations += numCODissociated_step*Nleft;
 
       //if diffuse recombination radiation is included, keep track of photons that need to be sent
       if( rec_rad ) { 
@@ -7290,18 +7942,49 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
       count++;
 
+
+
+      vector<double> freq_bounds = calc_freq_bounds(1., 1.e2);
+      double num_dust_absorptions = 0.;
+      double lambda;
+
       //calculate the number of outgoing photons after the subcycling
       for(short int f=0; f<numFreq; f++){
+        
+        if (dust) {
+          lambda = speed_of_light/(pow(10., (log10(freq_bounds[f]) + log10(freq_bounds[f+1]))/2.)*nu0HI);
+          num_dust_absorptions = N_in_total[f] * (1. - exp(-sigma_dust_combined_func(lambda)*initial_coldens_H*straight_correction_factor));
+        }
+
 
   //make sure N_out is bigger than zero, when subcycle time step is small this might 
   //not be the case due to numerical errors
-        N_out_total[f] = ( (N_in_total[f] - number_of_photo_ionisations[f]) > 0.0 ) ? 
-          (N_in_total[f] - number_of_photo_ionisations[f]) : 0.0;
+        N_out_total[f] = ( (N_in_total[f] - number_of_photo_ionisations[f] - num_dust_absorptions) > 0.0 ) ? 
+          (N_in_total[f] - number_of_photo_ionisations[f] - num_dust_absorptions) : 0.0;
 
   //check for NANs
         if(N_out_total[f] != N_out_total[f] ){
           cerr << endl << " (" << COMM_RANK << ") NAN detected! N_out_total: " << N_out_total[f] << " " 
             << N_in_total[f] << " " << number_of_photo_ionisations[f] << endl;
+          MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+      }
+      if (fuvprop) {
+        //Apart from the photons taken out through photodissociation, that number times 8.5 is also taken out for FUV pumping
+        //Also note that we use the mean photon energy of the Draine field, 8 eV. 
+
+        double num_fuv_dust_absorptions = 0.;
+        if (dust)
+          num_fuv_dust_absorptions = ((double) N_in_total[numFreq]) * (1. - exp(-sigma_dust_fuv * initial_coldens_H * straight_correction_factor));
+
+        double E_abs = (number_of_photo_dissociations * (1. + 8.5) + number_of_CO_photo_dissociations) * (8.*eV) + num_fuv_dust_absorptions;
+
+        N_out_total[numFreq] = (N_in_total[numFreq] - E_abs > 0.) ? N_in_total[numFreq] - E_abs : 0.0;
+
+
+        if (N_out_total[numFreq] != N_out_total[numFreq]) {
+          cerr << endl << " (" << COMM_RANK << ") NAN detected! N_out_total: " << N_out_total[numFreq] << " " 
+            << N_in_total[numFreq] << " " << number_of_photo_dissociations << endl;
           MPI_Abort(MPI_COMM_WORLD, -1);
         }
       }
@@ -7315,6 +7998,15 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
     }else{ //don't use temporal photon conservation scheme
 
+      if( initial_numDissociated > initial_N_H2 ){
+        initial_numDissociated = initial_N_H2;
+      }
+
+      if(molecular) {
+        initial_N_H2 -= initial_numDissociated;
+        initial_N_HI += initial_numDissociated * 2.0;
+      }
+
       //make sure number of ionisations is less than number of neutral atoms. Only necessary if subcycle step is too large
       if( initial_numIonised > initial_N_HI){
         initial_numIonised = initial_N_HI;
@@ -7324,24 +8016,74 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       initial_N_HI  -= initial_numIonised;
       initial_N_HII += initial_numIonised;
 
+
+      initial_N_CO -= initial_CO_photo_dissociations;
+      initial_N_C  += initial_CO_photo_dissociations;
+      initial_N_O  += initial_CO_photo_dissociations;
+
       double tmp = initial_N_HI/( UNIT_D * site.get_volume() * UNIT_V );
       site.set_n_HI( (float) tmp );
       tmp = initial_N_HII/( UNIT_D * site.get_volume() * UNIT_V );
       site.set_n_HII( (float) tmp );
+      tmp = initial_N_H2/( UNIT_D * site.get_volume() * UNIT_V );
+      site.set_n_H2( (float) tmp );
+      if (carbmonox) {
+        tmp = initial_N_C/( UNIT_D * site.get_volume() * UNIT_V );
+        site.set_n_C( (float) tmp );
+        tmp = initial_N_O/( UNIT_D * site.get_volume() * UNIT_V );
+        site.set_n_O( (float) tmp );
+        tmp = initial_N_CO/( UNIT_D * site.get_volume() * UNIT_V );
+        site.set_n_CO( (float) tmp );
+      }
+
 
       //total ionisations
-      double tot_ion = initial_photo_ionisations + initial_coll_ionisations;
+      double tot_ion = initial_photo_ionisations + initial_coll_ionisations + initial_cosmic_ionisations;
       //fraction of ionisations caused by photo-ionisations
       double phot_ion_frac = (tot_ion > 0.0) ? initial_photo_ionisations /tot_ion : 0.0;
       double one_over_init_phot_ion = (initial_photo_ionisations > 0.0) ? 1.0/initial_photo_ionisations : 0.0;
+
+      vector<double> freq_bounds = calc_freq_bounds(1., 1.e2);
+      double num_dust_absorptions = 0.;
+      double lambda;
+
       for(short int f=0; f<numFreq; f++){
-        N_out_total[f] = N_in_total[f] - (initial_numIonised * phot_ion_frac * initial_N_retained_H[f] * one_over_init_phot_ion);
+
+        if (dust) {
+          lambda = speed_of_light/(pow(10., (log10(freq_bounds[f]) + log10(freq_bounds[f+1]))/2.)*nu0HI);
+          num_dust_absorptions = N_in_total[f] * (1. - exp(-sigma_dust_combined_func(lambda)*initial_coldens_H*straight_correction_factor));
+        }
+
+        N_out_total[f] = N_in_total[f] - (initial_numIonised * phot_ion_frac * initial_N_retained_H[f] * one_over_init_phot_ion) - num_dust_absorptions;
 
         if(N_out_total[f] != N_out_total[f] ){
           cerr << endl << " (" << COMM_RANK << ") NAN detected! N_out_total: " << N_out_total[f] << " " << N_in_total[f] << " " << initial_N_retained_H[f] << endl
 	       << initial_numIonised << " " << phot_ion_frac << " " << one_over_init_phot_ion << endl;
           MPI_Abort(MPI_COMM_WORLD, -1);
         }
+      }
+
+      if (fuvprop) {
+        //total dissociations
+        double tot_dissoc = initial_photo_dissociations + initial_HI_collisional_dissociations + initial_H2_collisional_dissociations;
+        //fraction of dissociations caused by photo-dissociations
+        double phot_dissoc_frac = (tot_dissoc > 0.0) ? initial_photo_dissociations / tot_dissoc : 0.0;
+        double one_over_init_phot_dissoc = (initial_photo_dissociations > 0.0) ? 1.0/initial_photo_dissociations : 0.0;
+
+        double num_fuv_dust_absorptions = 0.;
+        if (dust)
+          num_fuv_dust_absorptions = N_in_total[numFreq] * (1. - exp(-sigma_dust_fuv * initial_coldens_H * straight_correction_factor));
+
+        N_out_total[numFreq] = N_in_total[numFreq] - ((initial_numDissociated * phot_dissoc_frac) * (1. + 8.5) + initial_CO_photo_dissociations)* (8.*eV) - num_fuv_dust_absorptions;
+
+
+        if(N_out_total[numFreq] != N_out_total[numFreq] ){
+          cerr << endl << " (" << COMM_RANK << ") NAN detected! N_out_total: " << N_out_total[numFreq] << " " << N_in_total[numFreq] << " " << initial_photo_dissociations << endl
+	       << initial_numDissociated << " " << phot_dissoc_frac << " " << one_over_init_phot_dissoc << endl;
+          MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+        if(N_out_total[numFreq] < 0.)
+          N_out_total[numFreq] = 0.;
       }
 
       //set the correct temperature of the gas
@@ -7366,7 +8108,10 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
     N_in_total[f] /= UNIT_I;
     N_out_total[f] /= UNIT_I;
   }
-
+  if (fuvprop) {
+    N_in_total[numFreq] /= UNIT_P;
+    N_out_total[numFreq] /= UNIT_P;
+  }
 
   return N_out_total;
 
@@ -7384,6 +8129,10 @@ void SimpleX::source_transport( Site& site ){
       for(short int f=0; f<numFreq; f++){
         double inten = (double) site.get_flux(f) * UNIT_T/site.get_numNeigh();
         sites[ site.get_neighId(j) ].addRadiationDiffOut( f, site.get_outgoing(j), (float) inten ); 
+      }
+      if (fuvprop) {
+        double inten = (double) site.get_fuv_flux() * UNIT_T/site.get_numNeigh();
+        sites[ site.get_neighId(j) ].addRadiationDiffOut( numFreq, site.get_outgoing(j), (float) inten );
       }
     }
     //total_inten += (double) it->get_flux() * UNIT_T * UNIT_I;
@@ -7412,6 +8161,10 @@ void SimpleX::source_transport( Site& site ){
               double inten = (double) site.get_flux(f) * UNIT_T/numPixels;
               sites[neigh].addRadiationDiffOut( f, j, (float) inten );
             }
+            if (fuvprop) {
+              double inten = (double) site.get_fuv_flux() * UNIT_T/numPixels;
+              sites[neigh].addRadiationDiffOut( numFreq, j, (float) inten );
+            }
           } 
         }
         if(!found){
@@ -7425,11 +8178,18 @@ void SimpleX::source_transport( Site& site ){
           double inten = (double) site.get_flux(f) * UNIT_T/numPixels;
           sites[ neigh ].addRadiationDiffOut( f, m, (float) inten ); 
         }
+        if (fuvprop) {
+          double inten = (double) site.get_fuv_flux() * UNIT_T/numPixels;
+          sites[ neigh ].addRadiationDiffOut( numFreq, m, (float) inten );
+        }
       }
 
     }//for all pixels
 
   }//if ballistic
+
+  if (fuvprop)
+    site.addRadiationDiffIn(numFreq, 0, (float) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P * UNIT_T);
 }
 
 
@@ -7446,7 +8206,7 @@ void SimpleX::diffuse_transport( Site& site, vector<double>& N_out_total ){
       if( sites[ neigh ].get_ballistic() ){
 
 	//loop over frequencies
-        for(short int f=0; f<numFreq; f++){
+        for(short int f=0; f<numFreq+fuvprop; f++){
           double inten = N_out_total[f]/site.get_numNeigh();
           sites[ neigh ].addRadiationDiffIn( f, site.get_outgoing(j), (float) inten ); 
         }
@@ -7511,7 +8271,7 @@ void SimpleX::diffuse_transport( Site& site, vector<double>& N_out_total ){
         }//if no direction associated with this linw
 
         for(unsigned int n=0; n<dir_to_use.size() ; n++ ){
-          for(short int f=0; f<numFreq;f++){
+          for(short int f=0; f<numFreq+fuvprop;f++){
 	    //intensity to send out
             double inten = N_out_total[f]/site.get_numNeigh();
             sites[ neigh ].addRadiationDiffIn( f,  dir_to_use[n], (float) inten/dir_to_use.size() );
@@ -7543,7 +8303,7 @@ void SimpleX::diffuse_transport( Site& site, vector<double>& N_out_total ){
           if( sites[neigh].get_neighId(j) == site.get_site_id() ){
             found = 1;
 	    //loop over frequencies
-            for(short int f=0; f<numFreq; f++){
+            for(short int f=0; f<numFreq+fuvprop; f++){
 	      //double inten = (double) site.get_flux(f) * UNIT_T/numPixels;
               double inten = (double) N_out_total[f]/numPixels;
               sites[neigh].addRadiationDiffIn( f, j, (float) inten );
@@ -7557,7 +8317,7 @@ void SimpleX::diffuse_transport( Site& site, vector<double>& N_out_total ){
       }else{
 	//if the neighbour is not ballistic, simply 
 	//add the radiation in the same direction bin
-        for(short int f=0; f<numFreq; f++){
+        for(short int f=0; f<numFreq+fuvprop; f++){
 	  //double inten = (double) site.get_flux(f) * UNIT_T/numPixels;
           double inten = (double) N_out_total[f]/numPixels;
           sites[ neigh ].addRadiationDiffIn( f, m, (float) inten ); 
@@ -7579,10 +8339,10 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
   numPixels = ( site.get_ballistic() )? site.get_numNeigh() : number_of_directions;
 
   //determine N_in_total
-  vector<double> N_in_total(numFreq, 0.0);
+  vector<double> N_in_total(numFreq+fuvprop, 0.0);
   vector<bool> inten_to_send(numPixels, 0);
   for( unsigned int j=0; j < numPixels; j++) {
-    for(short int f=0; f<numFreq;f++){
+    for(short int f=0; f<numFreq+fuvprop;f++){
       if( site.get_intensityOut( f,j ) > 0.0 ) { 
         N_in_total[f] += (double) site.get_intensityOut( f,j );
         inten_to_send[j] = 1;
@@ -7614,7 +8374,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
 
 	    //send the photons to the neighbour in the place in the neighbour vector
 	    //pointing to this site
-            for(short int f=0; f<numFreq;f++){
+            for(short int f=0; f<numFreq+fuvprop;f++){
 	      //intensity to send out, get correct part from all added intensities
               double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
               inten /= double(site.get_numStraight( j ));
@@ -7681,7 +8441,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
             }//if no direction associated with this linw
 
             for(unsigned int n=0; n<dir_to_use.size() ; n++ ){
-              for(short int f=0; f<numFreq;f++){
+              for(short int f=0; f<numFreq+fuvprop;f++){
 		//intensity to send out, get correct part from all added intensities
                 double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
                 inten /= double(site.get_numStraight( j ));
@@ -7720,7 +8480,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
               for( unsigned int n=0; !found && n<sites[ neigh ].get_numNeigh(); n++ ){
                 if( sites[neigh].get_neighId(n) == site.get_site_id() ){
                   found = 1;
-                  for(short int f=0; f<numFreq;f++){
+                  for(short int f=0; f<numFreq+fuvprop;f++){
                     double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
                     inten /= double(site.get_numStraight( site.get_outgoing(j) ));
                     sites[neigh].addRadiationDiffIn( f, n, (float) inten );
@@ -7734,7 +8494,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
 
 	      //if not ballistic,
 	      //send the photons to the neighbour in the same direction bin
-              for(short int f=0; f<numFreq;f++){
+              for(short int f=0; f<numFreq+fuvprop;f++){
                 double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
                 inten /= double(site.get_numStraight( site.get_outgoing(j) ));
                 sites[neigh].addRadiationDiffIn( f, j, (float) inten );
@@ -7827,7 +8587,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
               for( unsigned int n=0; !found && n<sites[ neigh ].get_numNeigh(); n++ ){
                 if( sites[neigh].get_neighId(n) == site.get_site_id() ){
                   found = 1;
-                  for(short int f=0; f<numFreq;f++){
+                  for(short int f=0; f<numFreq+fuvprop;f++){
                     double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
                     inten /= double(num_straight);
                     sites[neigh].addRadiationDiffIn( f, n, (float) inten );
@@ -7841,7 +8601,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
 
 	      //if not ballistic,
 	      //send the photons to the neighbour in the same direction bin
-              for(short int f=0; f<numFreq;f++){
+              for(short int f=0; f<numFreq+fuvprop;f++){
                 double inten = (N_in_total[f] > 0.0) ? N_out_total[f] * ( (double) site.get_intensityOut( f,j ) / N_in_total[f] ) : 0.0;
                 inten /= double(num_straight);
                 sites[neigh].addRadiationDiffIn( f, j, (float) inten );
@@ -7855,7 +8615,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
 
   //loop over all neighbours/directions
   for( unsigned int j=0; j < numPixels; j++) {
-    for(short int f=0; f<numFreq;f++){
+    for(short int f=0; f<numFreq+fuvprop;f++){
       //intensity has been send away, so delete it
       site.set_intensityOut(f,j,0.0);
     }
@@ -7863,7 +8623,7 @@ void SimpleX::non_diffuse_transport( Site& site, vector<double>& N_out_total ) {
 
   numPixels = ( site.get_ballistic() ) ? site.get_numNeigh() : number_of_directions;
   for( unsigned int j=0; j<numPixels; j++ ) { 
-    for(short int f=0; f<numFreq; f++){
+    for(short int f=0; f<numFreq+fuvprop; f++){
       if( site.get_intensityIn( f, j ) != site.get_intensityIn( f, j )){
         cerr << " NAN detected in intensityIn " << site.get_vertex_id() << " " << f << endl;
         MPI_Abort(MPI_COMM_WORLD, -1);
@@ -7893,7 +8653,7 @@ void SimpleX::radiation_transport( const unsigned int& run ){
       numPixels = ( it->get_ballistic() ) ? it->get_numNeigh() : number_of_directions;
 
       for( unsigned int j=0; j<numPixels; j++ ) { 
-        for(short int f=0; f<numFreq; f++){
+        for(short int f=0; f<numFreq+fuvprop; f++){
           it->set_intensityOut( f, j, 0.0 );
           it->set_intensityIn( f, j, 0.0 );
         }
@@ -7951,9 +8711,11 @@ void SimpleX::radiation_transport( const unsigned int& run ){
         if(!diffuseTransport){
           //transport photons with ballistic transport or DCT
           non_diffuse_transport( *it, N_out );
+
         } else {
           //transport photons diffusely
           diffuse_transport( *it, N_out );
+
         }
 
       }//if not in border   
@@ -7968,7 +8730,7 @@ void SimpleX::radiation_transport( const unsigned int& run ){
       numPixels = ( it->get_ballistic() ) ? it->get_numNeigh() : number_of_directions;
 
       for( unsigned int j=0; j<numPixels; j++ ) { 
-        for(short int f=0; f<numFreq; f++){
+        for(short int f=0; f<numFreq+fuvprop; f++){
 	        //double inten = (double) it->get_intensityIn(j) + (double) it->get_intensityOut(j);
 	        //float inten = it->get_intensityIn(f,j);
           it->set_intensityOut( f, j, it->get_intensityIn(f,j) );
@@ -8217,16 +8979,24 @@ void SimpleX::write_hdf5_output(char *name, const unsigned int& run){
     // writing neutral fraction      
     double_arr.reinit(1,dims);
     for(unsigned int j=0; j<dims[0]; j++ ){
-      double neutr_frac = (double) sites[ local_sites[i+j] ].get_n_HI()/( (double) sites[ local_sites[i+j] ].get_n_HI() + (double) sites[ local_sites[i+j] ].get_n_HII() );
+      double neutr_frac = (double) sites[ local_sites[i+j] ].get_n_HI()/( (double) sites[ local_sites[i+j] ].get_n_HI() + (double) sites[ local_sites[i+j] ].get_n_HII() + 2.0*((double) sites[ local_sites[i+j] ].get_n_H2()) );
       double_arr(j) = neutr_frac;
     }
     file.write_data("/Vertices/H_neutral_fraction",offset, &double_arr);
+
+    // writing molecular fraction      
+    double_arr.reinit(1,dims);
+    for(unsigned int j=0; j<dims[0]; j++ ){
+      double molec_frac = 2.0*((double) sites[ local_sites[i+j] ].get_n_H2())/( (double) sites[ local_sites[i+j] ].get_n_HI() + (double) sites[ local_sites[i+j] ].get_n_HII() + 2.0*((double) sites[ local_sites[i+j] ].get_n_H2()) );
+      double_arr(j) = molec_frac;
+    }
+    file.write_data("/Vertices/H_molecular_fraction",offset, &double_arr);
 
     // writing number density of gas
 
     double_arr.reinit(1,dims);
     for(unsigned int j=0; j<dims[0]; j++ )
-      double_arr(j) = ( (double) sites[ local_sites[i+j] ].get_n_HI() + (double) sites[ local_sites[i+j] ].get_n_HII() ) * UNIT_D;
+      double_arr(j) = ( (double) sites[ local_sites[i+j] ].get_n_HI() + (double) sites[ local_sites[i+j] ].get_n_HII() + 2.0*((double) sites[ local_sites[i+j] ].get_n_H2()) ) * UNIT_D;
     file.write_data("/Vertices/number_density",offset, &double_arr);
 
     // writing cell volumes
@@ -8247,6 +9017,17 @@ void SimpleX::write_hdf5_output(char *name, const unsigned int& run){
       double_arr(j) = flux;
     }
     file.write_data("/Vertices/luminosity",offset, &double_arr);
+
+    // writing FUV Luminositites
+    double_arr.reinit(1,dims);
+    for(unsigned int j=0; j<dims[0]; j++ ){
+      double flux = 0.0;
+      if(sites[ local_sites[i+j] ].get_source()){
+        flux += (double) sites[ local_sites[i+j] ].get_fuv_flux() * UNIT_P;
+      }
+      double_arr(j) = flux;
+    }
+    file.write_data("/Vertices/fuv_luminosity",offset, &double_arr);
 
     // writing temperature
     double_arr.reinit(1,dims);
@@ -8329,7 +9110,7 @@ double SimpleX::calc_IFront( const unsigned int& run ){
 
     if( !it->get_border() && it->get_process() == COMM_RANK ){
 
-      double frac1 = (double) it->get_n_HII()/( (double) it->get_n_HI() + (double) it->get_n_HII() );
+      double frac1 = (double) it->get_n_HII()/( (double) it->get_n_HI() + (double) it->get_n_HII() + 2.0*((double) it->get_n_H2()) );
 
       //if( frac1 >= 0.49 && frac1 <= 0.51 ){  
       if( frac1 >= 0.45 && frac1 <= 0.55 ){  
@@ -8455,8 +9236,8 @@ void SimpleX::clear_temporary(){
     it->delete_flux();
     it->delete_straight();
     it->delete_neighId();
-    it->delete_intensityIn(numFreq);
-    it->delete_intensityOut(numFreq);
+    it->delete_intensityIn(numFreq+fuvprop);
+    it->delete_intensityOut(numFreq+fuvprop);
     it->delete_outgoing();
 
   }//for all sites

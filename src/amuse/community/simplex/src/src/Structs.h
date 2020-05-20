@@ -199,10 +199,35 @@ class Site : public Vertex {
   //! get the number density of ionised hydrogen of site
   const float& get_n_HII() const{ return n_HII; }
 
+  //! assign the number density of molecular hydrogen to site
+  void set_n_H2(const float& nH){ n_H2 = nH; }
+  //! get the number density of molecular hydrogen of site
+  const float& get_n_H2() const{ return n_H2; }
+
+  //! assign the number density of carbon monoxide to site
+  void set_n_CO(const float& nH){ n_CO = nH; }
+  //! get the number density of carbon monoxide of site
+  const float& get_n_CO() const{ return n_CO; }
+
+  //! assign the number density of ionised carbon to site
+  void set_n_C(const float& nH){ n_C = nH; }
+  //! get the number density of ionised carbon of site
+  const float& get_n_C() const{ return n_C; }
+
+  //! assign the number density of atomic oxygen to site
+  void set_n_O(const float& nH){ n_O = nH; }
+  //! get the number density of atomic oxygen of site
+  const float& get_n_O() const{ return n_O; }
+
   //! assign the number density of ionised hydrogen to site
   void set_metallicity(const float& Z){ metallicity = Z; }
   //! get the number density of ionised hydrogen of site
   const float& get_metallicity() const{ return metallicity; }
+
+  //! assign the turbulence to site
+  void set_turbulence(const float& M){ turbulence = M; }
+  //! get the turbulence of site
+  const float& get_turbulence() const{ return turbulence; }
 
   //! assign internalEnergy to site
   void set_internalEnergy(const float& _u){ internalEnergy = _u; }
@@ -215,9 +240,9 @@ class Site : public Vertex {
   const float& get_dinternalEnergydt() const{ return dinternalEnergydt; }
 
   //! assign internalEnergy from temperature
-  void set_temperature(const float& _T){ internalEnergy =  (1.5 * k_B * _T)/((n_HI+n_HII)/(n_HI+2*n_HII) * m_H); }
+  void set_temperature(const float& _T){ internalEnergy =  (1.5 * k_B * _T)/((n_HI+n_HII+n_H2)/(n_HI+2*n_HII+0.5*n_H2) * m_H); }
   //! get the temperature
-  float get_temperature() { return (((n_HI+n_HII)/(n_HI+2*n_HII)) * m_H * internalEnergy)/(1.5 * k_B); }
+  float get_temperature() { return (((n_HI+n_HII+n_H2)/(n_HI+2*n_HII+0.5*n_H2)) * m_H * internalEnergy)/(1.5 * k_B); }
 
   //! assign clumping factor to site
   void set_clumping(const float& _C){ clumping = _C; }
@@ -228,6 +253,9 @@ class Site : public Vertex {
   void set_ballistic(const bool& ballistic_){ ballistic = ballistic_; }
   //! get ballistic
   const bool& get_ballistic() const{ return ballistic; }
+
+  void set_surface(const float& surface_){ surface = surface_; }
+  const float& get_surface() const{ return surface; }
 
   //! assign source
   void set_source(const bool& s_){ source = s_; }
@@ -247,6 +275,9 @@ class Site : public Vertex {
   void set_flux(const short int& f, const float& phi){ flux[f] = phi; }
   //! get the flux in the site
   const float& get_flux(const short int& f) const{ return flux[f]; }
+
+  void set_fuv_flux(const float& phi){ fuv_flux = phi; }
+  const float& get_fuv_flux() const{ return fuv_flux; }
 
   //! delete the neighId array
   void delete_neighId(){
@@ -356,15 +387,22 @@ class Site : public Vertex {
   float neigh_dist;                 //!< Mean neighbour distance
   float n_HI;                       //!< Number density of neutral hydrogen
   float n_HII;                      //!< Number density of ionised hydrogen
+  float n_H2;                       //!< Number density of molecular hydrogen
+  float n_CO;                       //!< Number density of carbon monoxide
+  float n_C;                        //!< Number density of singly ionised carbon
+  float n_O;                        //!< Number density of atomic oxygen
   float internalEnergy;             //!< Internal energy of the gas
   float dinternalEnergydt;          //!< Rate of change of internal energy (adiabatic)
   float clumping;                   //!< Clumping factor of the gas
   float metallicity;                //!< Metallicity relative to solar
+  float turbulence;                 //!< Parametrization of magnitude of turbulence; essentially the Mach number; used to scale high-density CO cooling
+  float surface;                    //!< Effective exposed surface for this site, used for interstellar FUV field
   
   bool ballistic;                   //!< Ballistic transport or direction conserving?
   bool source;                      //!< Source or not?
 
-  float* flux;                      //!< Flux of the site in case its a source
+  float* flux;                      //!< Flux of the site in case it's a source
+  float fuv_flux;                   //!< FUV flux of the site in case it's a source
 
   unsigned int* neighId;                     //!< vector holding id's of the neighbours of the vertex
   vector< vector< unsigned int > > straight; //!< Straightest neighbours
@@ -549,6 +587,26 @@ class Site_Update{
   //! get the number density of ionised hydrogen of site
   const float& get_n_HII() const{ return n_HII; }
 
+  //! assign the number density of molecular hydrogen to site
+  void set_n_H2(const float& nH){ n_H2 = nH; }
+  //! get the number density of molecular hydrogen of site
+  const float& get_n_H2() const{ return n_H2; }
+
+  //! assign the number density of carbon monoxide to site
+  void set_n_CO(const float& nH){ n_CO = nH; }
+  //! get the number density of carbon monoxide of site
+  const float& get_n_CO() const{ return n_CO; }
+
+  //! assign the number density of ionised carbon to site
+  void set_n_C(const float& nH){ n_C = nH; }
+  //! get the number density of ionised carbon of site
+  const float& get_n_C() const{ return n_C; }
+
+  //! assign the number density of neutral oxygen to site
+  void set_n_O(const float& nH){ n_O = nH; }
+  //! get the number density of neutral oxygen of site
+  const float& get_n_O() const{ return n_O; }
+
   //! set the 
   void set_internalEnergy(const float& _u){ internalEnergy = _u; }
   //! get the 
@@ -564,10 +622,25 @@ class Site_Update{
   //! get the flux in the site
   const float& get_flux() const{ return flux; }
 
+  //! assign flux to site
+  void set_fuv_flux(const float& phi){ fuv_flux = phi; }
+  //! get the flux in the site
+  const float& get_fuv_flux() const{ return fuv_flux; }
+
   //! assign metallicity to site
   void set_metallicity(const float& Z){ metallicity = Z; }
   //! get the metallicity in the site
   const float& get_metallicity() const{ return metallicity; }
+
+  //! assign turbulence to site
+  void set_turbulence(const float& M){ turbulence = M; }
+  //! get the turbulence in the site
+  const float& get_turbulence() const{ return turbulence; }
+
+  //! assign turbulence to site
+  void set_surface(const float& S){ surface = S; }
+  //! get the turbulence in the site
+  const float& get_surface() const{ return surface; }
 
   //! assign ballistic 
   void set_ballistic(const unsigned int& ballistic_){ ballistic = ballistic_; }
@@ -582,11 +655,18 @@ class Site_Update{
   unsigned long long int site_id;   
   float n_HI;
   float n_HII;
+  float n_H2;
+  float n_CO;
+  float n_C;
+  float n_O;
   float internalEnergy;             //!< internalEnergy in site
   float dinternalEnergydt;          //!< dudt in site
   float flux;                       //!< Flux of the site in case it's a source
+  float fuv_flux;                   //!< FUV flux of the site in case it's a source
   float metallicity;
+  float turbulence;
   unsigned int ballistic;           //!< Ballistic transport or direction conserving?
+  float surface;
 
  public:
   Site_Update& operator=(const Site& p2); 

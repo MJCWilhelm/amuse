@@ -149,6 +149,9 @@ class SimpleX{
     //! to avoid memory issues when this number would be increased
     void compute_triangulation();
 
+    //! Compute the exposed surfaces of the point distribution
+    void compute_surfaces();
+
     //! Create the sites array on which radiative transfer is performed
 
     //! From the list of simplices the vertices relevant for this proc are selected and
@@ -351,7 +354,7 @@ class SimpleX{
     double cooling_rate( Site& site );
 
     //! Rate of energy gain in cell
-    double heating_rate( const vector<double>& N_ion, const double& t_end );
+    double heating_rate( Site& site, const vector<double>& N_ion, const double& t_end );
 
     //! compute mean molecular weight
     double compute_mu( Site& );
@@ -442,12 +445,24 @@ class SimpleX{
 
     //! List of simplices that results from the QHull call
     vector< Simpl > simplices;
+    //! List of effective surfaces of vertices
+    vector< float > surfaces;
     //! Temporary list of neutral number densities that are read in
     vector< float > temp_n_HI_list;
     //! Temporary list of ionised number densities that are read in
     vector< float > temp_n_HII_list;
+    //! Temporary list of molecular number densities that are read in
+    vector< float > temp_n_H2_list;
+    //! Temporary list of CO number densities that are read in
+    vector< float > temp_n_CO_list;
+    //! Temporary list of C+ number densities that are read in
+    vector< float > temp_n_C_list;
+    //! Temporary list of OI number densities that are read in
+    vector< float > temp_n_O_list;
     //! Temporary list of fluxes that are read in
     vector< float > temp_flux_list;
+    //! Temporary list of fuv fluxes that are read in
+    vector< float > temp_fuv_flux_list;
     //! Temporary list of internalEnergies that are read in
     vector< float > temp_u_list;
     //! Temporary list of dudt that are read in
@@ -456,6 +471,8 @@ class SimpleX{
     vector< float > temp_clumping_list;
     //! Temporary list of metallicity
     vector<float> temp_metallicity_list;
+    //! Temporary list of turbulence
+    vector<float> temp_turbulence_list;
     
     //! Cross section of hydrogen
     vector<double> cross_H;
@@ -465,6 +482,11 @@ class SimpleX{
     vector<double> abundances;
     //! Vector of cooling curves
     vector< cooling_curve > curves;
+
+    double rho_frac_H;
+    double rho_frac_C;
+    double rho_frac_O;
+    double xCO_max;
 
     //! Variable used by random number generator
     gsl_rng * ran;
@@ -534,6 +556,7 @@ class SimpleX{
     double UNIT_T_MYR;             //!< Time of 1 sweep in Myr
     double UNIT_D;                 //!< Unit number density
     double UNIT_V;                 //!< Unit volume
+    double UNIT_P;                 //!< Unit power
     float straight_correction_factor; //!< Correction factor to correct for the fact that no straight lines exist on the grid
     vertex_tree vert_tree;         //!< Octree that will contain the vertices
     bool give_IFront;                   //!< Calculate IFront position for a source in centre?
@@ -542,6 +565,13 @@ class SimpleX{
     unsigned int*** maps;          //!< Array to hold the mappings between direction bins
     unsigned int number_of_directions; //!< Number of discretizations of the unit sphere for DCT
     unsigned int number_of_orientations;//!< Number of random rotations of the DCT discretization
+
+    double cosmic_ray_ionization_rate;//!< constant cosmic ray ionization rate, in s^-1
+    double interstellar_fuv_field;    //!< ambient interstellar FUV radiation field, in erg s^-1 cm^-2
+    bool dust;                      //!< Set this to 1 to include dust recombination and grain-influenced heating/cooling
+    bool molecular;                 //!< Set this to 1 to include molecular hydrogen chemistry/heating/cooling
+    bool fuvprop;                   //!< Set this to 1 to include the propagation of FUV radiation
+    bool carbmonox;                 //!< Set this to 1 to include CO chemistry and cooling
 };
 
 #endif

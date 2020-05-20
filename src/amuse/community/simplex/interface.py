@@ -98,7 +98,11 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.OUT)
         for x in ['x','y','z','rho','flux','xion','u']:
             function.addParameter(x, dtype='float64', direction=function.IN)
+        function.addParameter('xmol', dtype='float64',direction=function.IN, default=0.0 )
         function.addParameter('metallicity', dtype='float64',direction=function.IN, default=0.0 )
+        function.addParameter('fuv_flux', dtype='float64',direction=function.IN, default=0.0 )
+        function.addParameter('xCO', dtype='float64',direction=function.IN, default=0.0 )
+        function.addParameter('turbulence', dtype='float64',direction=function.IN, default=1.0 )
         function.result_type = 'int32'
         return function
     
@@ -115,9 +119,12 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function = LegacyFunctionSpecification()
         function.can_handle_array = True
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN)
-        for x in ['x','y','z','rho','flux','xion','u']:
+        for x in ['x','y','z','rho','flux','xion','u','xmol']:
             function.addParameter(x, dtype='float64', direction=function.OUT)
-        function.addParameter('metallicity', dtype='float64', direction=function.OUT)    
+        function.addParameter('metallicity', dtype='float64', direction=function.OUT)   
+        function.addParameter('fuv_flux', dtype='float64', direction=function.OUT)
+        function.addParameter('xCO', dtype='float64', direction=function.OUT)    
+        function.addParameter('turbulence', dtype='float64',direction=function.OUT)
         function.result_type = 'int32'
         return function
     
@@ -155,6 +162,22 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         """
         return function
 
+    @legacy_function
+    def get_fuv_flux():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the fuv flux from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('fuv_flux', dtype='float64', direction=function.OUT, description = "The current fuv flux of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
     
     @legacy_function
     def get_mean_intensity():
@@ -174,12 +197,46 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
 
 
     @legacy_function
+    def get_fuv_intensity():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the fuv radiation field from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('Jf', dtype='float64', direction=function.OUT, description = "The current fuv intensity of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+
+    @legacy_function
     def get_diffuse_intensity():
         function = LegacyFunctionSpecification()
         function.can_handle_array = True
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
             description = "Index of the particle to get the diffuse intensity from. This index must have been returned by an earlier call to :meth:`new_particle`")
         function.addParameter('Jd', dtype='float64', direction=function.OUT, description = "The current diffuse intensity of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+
+    @legacy_function
+    def get_effective_surface():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the effective surface from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('surface', dtype='float64', direction=function.OUT, description = "The effective exposed surface of the particle")
         function.result_type = 'int32'
         function.result_doc = """
         0 - OK
@@ -258,12 +315,62 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
 
 
     @legacy_function
+    def get_molecular_fraction():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the molecular fraction from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('xmol', dtype='float64', direction=function.OUT, description = "The current molecular fraction of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+
+    @legacy_function
+    def get_CO_fraction():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the CO fraction from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('xCO', dtype='float64', direction=function.OUT, description = "The current fraction of all C and O atoms incorporated in CO")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+
+    @legacy_function
     def get_metallicity():
         function = LegacyFunctionSpecification()
         function.can_handle_array = True
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
             description = "Index of the particle to get the metallicity from. This index must have been returned by an earlier call to :meth:`new_particle`")
-        function.addParameter('metallicity', dtype='float64', direction=function.OUT, description = "The current metallicity of the particle")
+        function.addParameter('metallicity', dtype='float64', direction=function.OUT, description = "The current metallicity (relative to solar) of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            current value was retrieved
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+    @legacy_function
+    def get_turbulence():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to get the turbulence from. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('turbulence', dtype='float64', direction=function.OUT, description = "The current turbulence parameter (turbulent speed/typical speed) of the particle")
         function.result_type = 'int32'
         function.result_doc = """
         0 - OK
@@ -280,7 +387,11 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN)
         for x in ['x','y','z','rho','flux','xion','u']:
             function.addParameter(x, dtype='float64', direction=function.IN)
+        function.addParameter('xmol',dtype='float64',direction=function.IN,default=0.0)      
         function.addParameter('metallicity',dtype='float64',direction=function.IN,default=0.0)    
+        function.addParameter('fuv_flux',dtype='float64',direction=function.IN,default=0.0)
+        function.addParameter('xCO',dtype='float64',direction=function.IN,default=0.0)
+        function.addParameter('turbulence',dtype='float64',direction=function.IN,default=0.0)
         function.result_type = 'int32'
         return function
     
@@ -309,6 +420,22 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
             description = "Index of the particle to set the flux for. This index must have been returned by an earlier call to :meth:`new_particle`")
         function.addParameter('flux', dtype='float64', direction=function.IN, description = "The new flux of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            new value was set
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+    @legacy_function
+    def set_fuv_flux():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to set the fuv flux for. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('fuv_flux', dtype='float64', direction=function.IN, description = "The new fuv flux of the particle")
         function.result_type = 'int32'
         function.result_doc = """
         0 - OK
@@ -383,6 +510,40 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
             particle could not be found
         """
         return function
+
+
+    @legacy_function
+    def set_molecular_fraction():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to set the molecular fraction for. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('xmol', dtype='float64', direction=function.IN, description = "The new molecular fraction of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            new value was set
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+
+    @legacy_function
+    def set_CO_fraction():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to set the CO fraction for. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('xCO', dtype='float64', direction=function.IN, description = "The new fraction of all C and O atoms incorporated in CO")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            new value was set
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
     
     
     @legacy_function
@@ -391,7 +552,23 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.can_handle_array = True
         function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
             description = "Index of the particle to set the metallicity for. This index must have been returned by an earlier call to :meth:`new_particle`")
-        function.addParameter('metallicity', dtype='float64', direction=function.IN, description = "The new metallicity of the particle")
+        function.addParameter('metallicity', dtype='float64', direction=function.IN, description = "The new metallicity (relative to solar) of the particle")
+        function.result_type = 'int32'
+        function.result_doc = """
+        0 - OK
+            new value was set
+        -1 - ERROR
+            particle could not be found
+        """
+        return function
+
+    @legacy_function
+    def set_turbulence():
+        function = LegacyFunctionSpecification()
+        function.can_handle_array = True
+        function.addParameter('index_of_the_particle', dtype='int32', direction=function.IN,
+            description = "Index of the particle to set the turbulence for. This index must have been returned by an earlier call to :meth:`new_particle`")
+        function.addParameter('turbulence', dtype='float64', direction=function.IN, description = "The new turbulence of the particle")
         function.result_type = 'int32'
         function.result_doc = """
         0 - OK
@@ -421,6 +598,34 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
     def get_box_size():
         function = LegacyFunctionSpecification()
         function.addParameter('box_size', dtype='float64', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def set_cosmic_ray_ionization_rate():
+        function = LegacyFunctionSpecification()
+        function.addParameter('cr_ir', dtype='float64', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_cosmic_ray_ionization_rate():
+        function = LegacyFunctionSpecification()
+        function.addParameter('cr_ir', dtype='float64', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def set_interstellar_fuv_field():
+        function = LegacyFunctionSpecification()
+        function.addParameter('isrf', dtype='float64', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_interstellar_fuv_field():
+        function = LegacyFunctionSpecification()
+        function.addParameter('isrf', dtype='float64', direction=function.OUT)
         function.result_type = 'int32'
         return function
 
@@ -583,6 +788,63 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.addParameter('collisional_ionisation_flag', dtype='int32', direction=function.OUT)
         function.result_type = 'int32'
         return function
+
+
+    @legacy_function
+    def set_dust_interactions():
+        function = LegacyFunctionSpecification()
+        function.addParameter('dust_flag', dtype='int32', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_dust_interactions():
+        function = LegacyFunctionSpecification()
+        function.addParameter('dust_flag', dtype='int32', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def set_molecular_processes():
+        function = LegacyFunctionSpecification()
+        function.addParameter('molecular_flag', dtype='int32', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_molecular_processes():
+        function = LegacyFunctionSpecification()
+        function.addParameter('molecular_flag', dtype='int32', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def set_fuv_propagation():
+        function = LegacyFunctionSpecification()
+        function.addParameter('far_ultraviolet_flag', dtype='int32', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_fuv_propagation():
+        function = LegacyFunctionSpecification()
+        function.addParameter('far_ultraviolet_flag', dtype='int32', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def set_carbmonox():
+        function = LegacyFunctionSpecification()
+        function.addParameter('carbonmonoxide_flag', dtype='int32', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_carbmonox():
+        function = LegacyFunctionSpecification()
+        function.addParameter('carbonmonoxide_flag', dtype='int32', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
     
     def synchronize_model(self):
         pass
@@ -706,11 +968,59 @@ class SimpleX(CommonCode):
         )
 
         handler.add_method_parameter(
+            "get_dust_interactions",
+            "set_dust_interactions",
+            "dust_flag",
+            "not use dust-related processes if 0, do if 1\n(grain-assisted recombination (incl. heating), gas-grain energy transfer, grain photoelectric heating)",
+            default_value = 0
+        )
+
+        handler.add_method_parameter(
+            "get_molecular_processes",
+            "set_molecular_processes",
+            "molecular_flag",
+            "not use molecular hydrogen-related processes if 0, do if 1\n(formation on grains, dissociation through collisions with H and H2 and through FUV, rovibrational, collisional dissociation cooling, formation FUV pumping and dissociation heating)",
+            default_value = 0
+        )
+
+        handler.add_method_parameter(
+            "get_fuv_propagation",
+            "set_fuv_propagation",
+            "far_ultraviolet_flag",
+            "not do FUV propagation if 0, do if 1\n(if False, use interstellar_fuv_field for every cell and don't propagate FUV flux, if True, use interstellar_fuv_field for boundary cells and propagate FUV flux)",
+            default_value = 0
+        )
+
+        handler.add_method_parameter(
+            "get_carbmonox",
+            "set_carbmonox",
+            "carbonmonoxide_flag",
+            "not do CO chemistry and cooling if 0, do if 1\nCooling of course only in conjunction with thermal_flag",
+            default_value = 0
+        )
+
+        handler.add_method_parameter(
             "get_box_size",
             "set_box_size", 
             "box_size", 
             "boxsize for radiative transfer particle distribution", 
             default_value = 13200. | units.parsec
+        )
+
+        handler.add_method_parameter(
+            "get_cosmic_ray_ionization_rate",
+            "set_cosmic_ray_ionization_rate",
+            "cosmic_ray_ionization_rate",
+            "cosmic ray ionization rate",
+            default_value = 0. | units.s**-1
+        )
+
+        handler.add_method_parameter(
+            "get_interstellar_fuv_field",
+            "set_interstellar_fuv_field",
+            "interstellar_fuv_field",
+            "flux of the ambient interstellar FUV radiation field",
+            default_value = 1.6e-3 | units.erg * units.s**-1 * units.cm**-2
         )
 
         handler.add_method_parameter(
@@ -741,6 +1051,10 @@ class SimpleX(CommonCode):
                 1.0e48 / units.s,
                 handler.NO_UNIT,
                 units.cm**2 / units.s**2,
+                handler.NO_UNIT,
+                handler.NO_UNIT,
+                units.LSun,
+                handler.NO_UNIT,
                 handler.NO_UNIT
                 ),
             (
@@ -772,6 +1086,10 @@ class SimpleX(CommonCode):
                 handler.NO_UNIT,
                 units.cm**2 / units.s**2,
                 handler.NO_UNIT,
+                handler.NO_UNIT,
+                units.LSun,
+                handler.NO_UNIT,
+                handler.NO_UNIT,
                 handler.ERROR_CODE
                 )
             )
@@ -786,6 +1104,10 @@ class SimpleX(CommonCode):
                 1.0e48 / units.s,
                 handler.NO_UNIT,
                 units.cm**2 / units.s**2,
+                handler.NO_UNIT,
+                handler.NO_UNIT,
+                units.LSun,
+                handler.NO_UNIT,
                 handler.NO_UNIT
                 ),
             (
@@ -897,12 +1219,42 @@ class SimpleX(CommonCode):
             )
         )
         handler.add_method(
+            "set_fuv_flux",
+            (
+                handler.NO_UNIT,
+                units.LSun,
+            ),
+            (
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "get_fuv_flux",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                units.LSun,
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
             "get_mean_intensity",
             (
                 handler.NO_UNIT,
             ),
             (
                 1.0e48 / units.s,
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "get_fuv_intensity",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                1.6e-3 * units.erg / units.s / units.cm**2.,
                 handler.ERROR_CODE
             )
         )
@@ -915,7 +1267,17 @@ class SimpleX(CommonCode):
                 1.0e48 / units.s,
                 handler.ERROR_CODE
             )
-        )        
+        )    
+        handler.add_method(
+            "get_effective_surface",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                units.parsec**2,
+                handler.ERROR_CODE
+            )
+        )
         handler.add_method(
             "set_ionisation",
             (
@@ -937,6 +1299,46 @@ class SimpleX(CommonCode):
             )
         )
         handler.add_method(
+            "set_molecular_fraction",
+            (
+                handler.NO_UNIT,
+                handler.NO_UNIT
+            ),
+            (
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "get_molecular_fraction",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                handler.NO_UNIT,
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "set_CO_fraction",
+            (
+                handler.NO_UNIT,
+                handler.NO_UNIT
+            ),
+            (
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "get_CO_fraction",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                handler.NO_UNIT,
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
             "set_metallicity",
             (
                 handler.NO_UNIT,
@@ -948,6 +1350,26 @@ class SimpleX(CommonCode):
         )
         handler.add_method(
             "get_metallicity",
+            (
+                handler.NO_UNIT,
+            ),
+            (
+                handler.NO_UNIT,
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "set_turbulence",
+            (
+                handler.NO_UNIT,
+                handler.NO_UNIT
+            ),
+            (
+                handler.ERROR_CODE
+            )
+        )
+        handler.add_method(
+            "get_turbulence",
             (
                 handler.NO_UNIT,
             ),
@@ -1078,6 +1500,54 @@ class SimpleX(CommonCode):
             (handler.NO_UNIT, ),
             (handler.ERROR_CODE,)
         )
+
+        handler.add_method(
+            "get_dust_interactions",
+            (),
+            (handler.NO_UNIT, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_dust_interactions",
+            (handler.NO_UNIT, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_molecular_processes",
+            (),
+            (handler.NO_UNIT, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_molecular_processes",
+            (handler.NO_UNIT, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_fuv_propagation",
+            (),
+            (handler.NO_UNIT, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_fuv_propagation",
+            (handler.NO_UNIT, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_carbmonox",
+            (),
+            (handler.NO_UNIT, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_carbmonox",
+            (handler.NO_UNIT, ),
+            (handler.ERROR_CODE,)
+        )
     
         handler.add_method(
             "get_box_size",
@@ -1088,6 +1558,30 @@ class SimpleX(CommonCode):
         handler.add_method(
             "set_box_size",
             (units.parsec, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_cosmic_ray_ionization_rate",
+            (),
+            (units.s**-1, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_cosmic_ray_ionization_rate",
+            (units.s**-1, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_interstellar_fuv_field",
+            (),
+            (units.erg * units.s**-1 * units.cm**-2, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_interstellar_fuv_field",
+            (units.erg * units.s**-1 * units.cm**-2, ),
             (handler.ERROR_CODE,)
         )
 
@@ -1126,12 +1620,22 @@ class SimpleX(CommonCode):
         handler.add_getter('particles', 'get_density')
         handler.add_setter('particles', 'set_flux')
         handler.add_getter('particles', 'get_flux')
+        handler.add_setter('particles', 'set_fuv_flux')
+        handler.add_getter('particles', 'get_fuv_flux')
         handler.add_getter('particles', 'get_mean_intensity')
+        handler.add_getter('particles', 'get_fuv_intensity')
         handler.add_getter('particles', 'get_diffuse_intensity')
+        handler.add_getter('particles', 'get_effective_surface')
         handler.add_setter('particles', 'set_ionisation')
         handler.add_getter('particles', 'get_ionisation')
+        handler.add_setter('particles', 'set_molecular_fraction')
+        handler.add_getter('particles', 'get_molecular_fraction')
+        handler.add_setter('particles', 'set_CO_fraction')
+        handler.add_getter('particles', 'get_CO_fraction')
         handler.add_setter('particles', 'set_metallicity')
         handler.add_getter('particles', 'get_metallicity')
+        handler.add_setter('particles', 'set_turbulence')
+        handler.add_getter('particles', 'get_turbulence')
         handler.add_setter('particles', 'set_internal_energy')
         handler.add_getter('particles', 'get_internal_energy')
         handler.add_setter('particles', 'set_dinternal_energy_dt')
@@ -1175,9 +1679,14 @@ class SimpleX(CommonCode):
         handler.add_method('RUN', 'get_density')
         handler.add_method('RUN', 'get_position')
         handler.add_method('RUN', 'get_flux')
+        handler.add_method('RUN', 'get_fuv_flux')
         handler.add_method('RUN', 'get_mean_intensity')
+        handler.add_method('RUN', 'get_fuv_intensity')
         handler.add_method('RUN', 'get_diffuse_intensity')
+        handler.add_method('RUN', 'get_effective_surface')
         handler.add_method('RUN', 'get_ionisation')
+        handler.add_method('RUN', 'get_molecular_fraction')
+        handler.add_method('RUN', 'get_CO_fraction')
         handler.add_method('RUN', 'get_internal_energy')
         handler.add_method('RUN', 'set_dinternal_energy_dt')
         handler.add_method('RUN', 'get_dinternal_energy_dt')
@@ -1186,6 +1695,8 @@ class SimpleX(CommonCode):
 
         handler.add_method('INITIALIZED', 'set_hilbert_order')
         handler.add_method('INITIALIZED', 'set_box_size')
+        handler.add_method('INITIALIZED', 'set_cosmic_ray_ionization_rate')
+        handler.add_method('INITIALIZED', 'set_interstellar_fuv_field')
         handler.add_method('INITIALIZED', 'set_timestep')
         handler.add_method('INITIALIZED', 'set_source_Teff')
         handler.add_method('INITIALIZED', 'set_number_frequency_bins')
@@ -1194,6 +1705,10 @@ class SimpleX(CommonCode):
         handler.add_method('INITIALIZED', 'set_metal_cooling')
         handler.add_method('INITIALIZED', 'set_recombination_radiation')
         handler.add_method('INITIALIZED', 'set_collisional_ionization')
+        handler.add_method('INITIALIZED', 'set_dust_interactions')
+        handler.add_method('INITIALIZED', 'set_molecular_processes')
+        handler.add_method('INITIALIZED', 'set_fuv_propagation')
+        handler.add_method('INITIALIZED', 'set_carbmonox')
 
 
     
@@ -1244,7 +1759,7 @@ class SimpleXSplitSet(SimpleX):
         self.overridden().recommit_particles() 
 
         channel=sites.new_channel_to(self.particles)
-        attributes=["x","y","z","rho","xion","u","flux"]
+        attributes=["x","y","z","rho","xion","u","xmol","flux","fuv_flux", "xCO", "turbulence"]
         if hasattr(sites,"metallicity"):
            attributes.append("metallicity") 
         if hasattr(sites,"du_dt"):
@@ -1256,7 +1771,7 @@ class SimpleXSplitSet(SimpleX):
 
     def evolve_model(self,tend):
         self.overridden().evolve_model(tend)
-        self.simplex_to_gas_channel.copy_attributes(["xion","u","metallicity"])
+        self.simplex_to_gas_channel.copy_attributes(["xion","u","xmol","metallicity","fuv_flux","xCO","turbulence"])
         
     def define_state(self, handler):
         CommonCode.define_state(self, handler)
@@ -1301,7 +1816,10 @@ class SimpleXSplitSet(SimpleX):
         handler.add_method('RUN', 'get_density')
         handler.add_method('RUN', 'get_position')
         handler.add_method('RUN', 'get_flux')
+        handler.add_method('RUN', 'get_fuv_flux')
         handler.add_method('RUN', 'get_ionisation')
+        handler.add_method('RUN', 'get_molecular_fraction')
+        handler.add_method('RUN', 'get_CO_fraction')
         handler.add_method('RUN', 'get_internal_energy')
         handler.add_method('RUN', 'set_dinternal_energy_dt')
         handler.add_method('RUN', 'get_dinternal_energy_dt')
@@ -1310,6 +1828,8 @@ class SimpleXSplitSet(SimpleX):
 
         handler.add_method('INITIALIZED', 'set_hilbert_order')
         handler.add_method('INITIALIZED', 'set_box_size')
+        handler.add_method('INITIALIZED', 'set_cosmic_ray_ionization_rate')
+        handler.add_method('INITIALIZED', 'set_interstellar_fuv_field')
         handler.add_method('INITIALIZED', 'set_timestep')
         handler.add_method('INITIALIZED', 'set_source_Teff')
         handler.add_method('INITIALIZED', 'set_number_frequency_bins')
@@ -1318,6 +1838,7 @@ class SimpleXSplitSet(SimpleX):
         handler.add_method('INITIALIZED', 'set_metal_cooling')
         handler.add_method('INITIALIZED', 'set_recombination_radiation')
         handler.add_method('INITIALIZED', 'set_collisional_ionization')
-
-
-Simplex = SimpleX
+        handler.add_method('INITIALIZED', 'set_dust_interactions')
+        handler.add_method('INITIALIZED', 'set_molecular_processes')
+        handler.add_method('INITIALIZED', 'set_fuv_propagation')
+        handler.add_method('INITIALIZED', 'set_carbmonox')

@@ -168,12 +168,19 @@ Site::Site(){
     neigh_dist = 0.0;   
     n_HI = 0.0;
     n_HII = 0.0;
+    n_H2 = 0.0;
+    n_CO = 0.0;
+    n_C  = 0.0;
+    n_O  = 0.0;
     ballistic = 1;
     internalEnergy = 0.0;
     dinternalEnergydt = 0.0;
     clumping = 1.0;
     metallicity=0.0;
     source = 0;
+    fuv_flux = 0.0;
+    turbulence = 0.0;
+    surface = 0.0;
 
     flux = NULL; 
     neighId = NULL;
@@ -195,11 +202,17 @@ Site_Update::Site_Update(){
     site_id = 0;   
     n_HI = 0.0;   
     n_HII = 0.0; 
+    n_H2 = 0.0;
+    n_CO = 0.0;
+    n_C  = 0.0;
+    n_O  = 0.0;
     internalEnergy = 0.0;
     dinternalEnergydt = 0.0;
     metallicity = 0.0;
+    turbulence = 0.0;
     //flux = 0.0;            
     ballistic = 0;
+    surface = 0.0;
   
 }
 
@@ -224,11 +237,17 @@ Site& Site::operator=(const Site_Update& p2){
   process        = p2.process;
   n_HI           = p2.n_HI;
   n_HII          = p2.n_HII;
+  n_H2           = p2.n_H2;
+  n_CO           = p2.n_CO;
+  n_C            = p2.n_C;
+  n_O            = p2.n_O;
   internalEnergy = p2.internalEnergy;
   dinternalEnergydt = p2.dinternalEnergydt;
   metallicity    = p2.metallicity;
+  turbulence     = p2.turbulence;
   //flux         = p2.flux;
   ballistic      = (bool) p2.ballistic;
+  surface        = p2.surface;
 
   return *this;
 
@@ -267,11 +286,17 @@ Site_Update& Site_Update::operator=(const Site& p2){
   site_id        = p2.site_id;
   n_HI           = p2.n_HI;
   n_HII          = p2.n_HII;
+  n_H2           = p2.n_H2;
+  n_CO           = p2.n_CO;
+  n_C            = p2.n_C;
+  n_O            = p2.n_O;
   internalEnergy = p2.internalEnergy;
   dinternalEnergydt = p2.dinternalEnergydt;
   metallicity    = p2.metallicity;
+  turbulence     = p2.turbulence;
   //flux           = p2.flux;
   ballistic      = (unsigned int) p2.ballistic;
+  surface        = p2.surface;
 
   return *this;
 

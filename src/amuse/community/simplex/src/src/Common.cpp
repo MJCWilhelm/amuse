@@ -77,6 +77,44 @@ float inproduct(float v1[], float v2[], int dimension) {
 
 }
 
+//calculate the area of a triangle from the coordinates of the three vertices
+double area_triangle(double A[], double B[], double C[], int dimension) {
+  if (dimension == 3) {
+    double AB2 = 0., AC2 = 0., ABAC = 0.;
+
+    for (int i = 0; i < 3; i++) {
+      AB2 += pow(A[i] - B[i], 2.);
+      AC2 += pow(A[i] - C[i], 2.);
+      ABAC += (A[i] - B[i])*(A[i] - C[i]);
+    }
+
+    return 0.5*sqrt(AB2*AC2 - pow(ABAC, 2.));
+  }
+  else {
+    cout << "The area of a triangle is only available for 3D" << endl;
+    return 0.;
+  }
+}
+
+//overloaded for floats
+float area_triangle(float A[], float B[], float C[], int dimension) {
+  if (dimension == 3) {
+    float AB2 = 0., AC2 = 0., ABAC = 0.;
+
+    for (int i = 0; i < 3; i++) {
+      AB2 += pow(A[i] - B[i], 2.);
+      AC2 += pow(A[i] - C[i], 2.);
+      ABAC += (A[i] - B[i])*(A[i] - C[i]);
+    }
+
+    return 0.5*sqrt(AB2*AC2 - pow(ABAC, 2.));
+  }
+  else {
+    cout << "The area of a triangle is only available for 3D" << endl;
+    return 0.;
+  }
+}
+
 //calculate the determinant of a 4x4 matrix
 double det_4by4 (double a[]) {
 
@@ -451,4 +489,34 @@ int pow(const int& a, const int& b){
 
   return res;
 
+}
+
+
+// Functions to compute the dust cross sections from Gnedin et al. 2008
+double sigma_dust_combined_func (double lambda) {
+  return (sigma_dust_SMC_func(lambda) + sigma_dust_LMC_func(lambda))/2.;
+}
+
+double sigma_dust_SMC_func (double lambda) {
+
+  double sigma = 0.;
+
+  for (int i = 0; i < 7; i++)
+    sigma += dust_util(lambda/gned_lambda_SMC[i], gned_a_SMC[i], gned_b_SMC[i], gned_p_SMC[i], gned_q_SMC[i]);
+
+  return sigma * sigma_dust_SMC;
+}
+
+double sigma_dust_LMC_func (double lambda) {
+
+  double sigma = 0.;
+
+  for (int i = 0; i < 7; i++)
+    sigma += dust_util(lambda/gned_lambda_LMC[i], gned_a_LMC[i], gned_b_LMC[i], gned_p_LMC[i], gned_q_LMC[i]);
+
+  return sigma * sigma_dust_LMC;
+}
+
+double dust_util (double x, double a_i, double b_i, double p_i, double q_i) {
+  return a_i/(pow(x,p_i) + pow(x,-q_i) + b_i);
 }

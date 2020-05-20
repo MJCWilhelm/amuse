@@ -34,6 +34,9 @@ void AMUSE_SimpleX::read_parameters(){
   
   //units of source
   UNIT_I = 1.e48;
+
+  //units of fuv source
+  UNIT_P = LSun;
   
   //number of frequencies
   numFreq = 1;
@@ -49,6 +52,25 @@ void AMUSE_SimpleX::read_parameters(){
   
   //include recombination radiation?
   rec_rad = 0;
+
+  //constant cosmic ray ionization rate, in s^-1
+  cosmic_ray_ionization_rate = 0.0;
+
+  //interstellar FUV radiation field, in erg s^-1 cm^-2
+  interstellar_fuv_field = 1.*G0;
+
+  //include molecular hydrogen chemistry?
+  molecular = 0;
+
+  //propagate fuv field
+  fuvprop = 0;
+
+  //include CO chemistry
+  carbmonox = 0;
+
+  rho_frac_H = 1.;
+  rho_frac_C = 0.;
+  rho_frac_O = 0.;
   
 //----------- Don't change these unless you know what you're doing -------------------------//
 
@@ -109,12 +131,11 @@ void AMUSE_SimpleX::read_parameters(){
   freq_spacing = ENERGY_WEIGHTS;
 //----------------------------------------------------------------------//
 
-
 }
 
 //add one vertex to the list of vertices that needs to be triangulated
 int AMUSE_SimpleX::add_vertex(long *id, double x,double y,double z,double rho,
-                                           double flux,double xion,double uInt, double metallicity){
+                                           double flux,double xion,double uInt,double xmol, double metallicity, double fuv_flux, double xCO, double turbulence){
 
   Vertex tempVert;
   if( COMM_RANK ==0){
@@ -129,15 +150,31 @@ int AMUSE_SimpleX::add_vertex(long *id, double x,double y,double z,double rho,
     vertices.push_back( tempVert );
     numSites=vertices.size();
   }
-  
-  double n_HI = rho*(1.0-xion);
-  double n_HII = rho*xion;
+
+  if (xCO > xCO_max) { xCO = xCO_max; }
+
+  double n_HI = rho*(1.0-xion-xmol)*rho_frac_H;
+  double n_HII = rho*xion*rho_frac_H;
+  double n_H2 = rho*0.5*xmol*rho_frac_H;
+
+  double n_CO = rho*xCO/28.*(rho_frac_C + rho_frac_O);
+  double n_C  = rho*(1. - xCO)/12.*rho_frac_C;
+  double n_O  = rho*(1. - xCO)/16.*rho_frac_O;
+
   temp_n_HI_list.push_back( (float) n_HI);
   temp_n_HII_list.push_back( (float) n_HII );
+  temp_n_H2_list.push_back( (float) n_H2 );
+
+  temp_n_CO_list.push_back( (float) n_CO );
+  temp_n_C_list.push_back( (float) n_C );
+  temp_n_O_list.push_back( (float) n_O );
+
   temp_flux_list.push_back(flux);
+  temp_fuv_flux_list.push_back(fuv_flux);
   temp_u_list.push_back(uInt);
   temp_dudt_list.push_back(0.0);
   temp_metallicity_list.push_back(metallicity);
+  temp_turbulence_list.push_back(turbulence);
 
   return 0;
 
@@ -145,12 +182,19 @@ int AMUSE_SimpleX::add_vertex(long *id, double x,double y,double z,double rho,
 
 //add a site to the sites list
 int AMUSE_SimpleX::add_site(long *id, double x,double y,double z,double rho,
-                                           double flux,double xion, double uInt, double metallicity){
+                                           double flux,double xion,double uInt,double xmol, double metallicity, double fuv_flux, double xCO, double turbulence){
 
   Site tempSite;
 
-  double n_HI = rho*(1.0-xion);
-  double n_HII = rho*xion;
+  if (xCO > xCO_max) { xCO = xCO_max; }
+
+  double n_HI = rho*(1.0-xion-xmol)*rho_frac_H;
+  double n_HII = rho*xion*rho_frac_H;
+  double n_H2 = rho*0.5*xmol*rho_frac_H;
+
+  double n_CO = rho*xCO/28.*(rho_frac_C + rho_frac_O);
+  double n_C  = rho*(1. - xCO)/12.*rho_frac_C;
+  double n_O  = rho*(1. - xCO)/16.*rho_frac_O;
 
   if(inDomain(x,y,z,COMM_RANK)){
     tempSite.set_x( x );
@@ -161,10 +205,15 @@ int AMUSE_SimpleX::add_site(long *id, double x,double y,double z,double rho,
     tempSite.set_process( COMM_RANK );
     tempSite.set_n_HI( (float) n_HI );
     tempSite.set_n_HII( (float) n_HII );
-    if(flux > 0.0){
+    tempSite.set_n_H2( (float) n_H2 );
+    tempSite.set_n_CO( (float) n_CO );
+    tempSite.set_n_C( (float) n_C );
+    tempSite.set_n_O( (float) n_O );
+    if(flux > 0.0 || fuv_flux > 0.0){
       tempSite.set_source(1);
       tempSite.create_flux(numFreq);
       tempSite.set_flux( 0, flux );
+      tempSite.set_fuv_flux( fuv_flux );
     }else{
       tempSite.set_source(0);
     }
@@ -172,13 +221,14 @@ int AMUSE_SimpleX::add_site(long *id, double x,double y,double z,double rho,
     tempSite.set_internalEnergy(uInt);
     tempSite.set_dinternalEnergydt(0.0);
     tempSite.set_metallicity(metallicity);
+    tempSite.set_turbulence(turbulence);
     
     sites.push_back( tempSite );
     numSites++;
     
     // cerr << " Add site " << tempSite.get_vertex_id() << " x: " << tempSite.get_x() << " y: " << tempSite.get_y() << " z: " << tempSite.get_z() 
     //      << " n_HI: " << tempSite.get_n_HI() << " n_HII: " << tempSite.get_n_HII() << endl;
-        
+
     return 1;
   } else
   {
@@ -229,7 +279,7 @@ void AMUSE_SimpleX::convert_units(){
     //temp_n_HI_list[i] /= UNIT_D;
     //temp_n_HII_list[i] /= UNIT_D;  
   //}
-  
+
 }
 
 //initialise the code:
@@ -301,6 +351,13 @@ int AMUSE_SimpleX::initialize(double current_time) {
   // triangulate the subboxes
   compute_triangulation();
 
+  if( COMM_RANK == 0 ){
+    surfaces.clear();
+    surfaces.resize(vertices.size(), 0.);
+    if (fuvprop)
+      compute_surfaces();
+  }
+
   //create a site at each vertex from the list of simplices that was obtained 
   //from the triangulation functions, containing the physical parameters
   create_sites();
@@ -318,7 +375,7 @@ int AMUSE_SimpleX::initialize(double current_time) {
   compute_physics( 0 );
   remove_border_simplices();
   syncflag=0;
- 
+
   // if(COMM_RANK == 0){
   //   cerr << " Done" << endl;
   // }
@@ -338,17 +395,15 @@ int AMUSE_SimpleX::setup_simplex(){
 
 //evolve the radiative transfer over time t_target
 int AMUSE_SimpleX::evolve(double t_target, int sync) {
-  
-
     
   double dt= t_target*secondsPerMyr - total_time;
   
   //cout << "time: " << t_target << " " << dt << "\n"; 
-    
+ 
   if(syncflag==1){
     reinitialize();
   }
-  
+ 
   // if(COMM_RANK == 0){
   //   cerr << "AMUSE_SimpleX: performing radiation transport...";
   // }
@@ -376,7 +431,7 @@ int AMUSE_SimpleX::evolve(double t_target, int sync) {
   // if(COMM_RANK == 0){
   //   cerr << " Done" << endl;
   // }
-  
+ 
   return 0;
 
 }
@@ -481,6 +536,16 @@ int AMUSE_SimpleX::reinitialize(){
     //compute the triangulation
     compute_triangulation();
 
+    if( COMM_RANK == 0 ){
+      if (fuvprop)
+        compute_surfaces();
+      else{
+        surfaces.resize(vertices.size(), 0.);
+        for (int i = 0; i < vertices.size(); i++)
+          surfaces[i] = 0.;
+      }
+    }
+
     //create the sites vector from the vertex list
     create_sites();
 
@@ -512,7 +577,7 @@ int AMUSE_SimpleX::reinitialize(){
 
 //return properties of specified site
 int AMUSE_SimpleX::get_site(int id, double *x,double *y,double *z,double *rho,
-                                              double *flux,double *xion, double *uInt, double *metallicity){
+                                              double *flux,double *xion,double *uInt,double *xmol, double *metallicity, double *fuv_flux, double *xCO, double *turbulence){
    SITE_ITERATOR p;
    Site tmp;
    
@@ -523,8 +588,9 @@ int AMUSE_SimpleX::get_site(int id, double *x,double *y,double *z,double *rho,
        *x=p->get_x();
        *y=p->get_y();
        *z=p->get_z();
-       double nH = (double) p->get_n_HI() + (double) p->get_n_HII();
-       *rho = nH;
+       double nH = (double) p->get_n_HI() + (double) p->get_n_HII() + ((double) p->get_n_H2())*2.0;
+       double nZ = ((double) p->get_n_CO())*28. + (double) p->get_n_C()*12. + (double) p->get_n_O()*16.;
+       *rho = nH + nZ;
        double totalFlux = 0.0;
        if( p->get_source() ){
          for(short int f=0; f<numFreq;f++){
@@ -532,9 +598,13 @@ int AMUSE_SimpleX::get_site(int id, double *x,double *y,double *z,double *rho,
          }
        }
        *flux = totalFlux;
+       *fuv_flux = p->get_fuv_flux();
        *xion = (double) p->get_n_HII()/nH;
+       *xmol = (double) p->get_n_H2()/nH*2.0;
+       *xCO  = 2.*((double) p->get_n_CO())/( (double) p->get_n_C() + (double) p->get_n_O() + 2.*((double) p->get_n_CO()));
        *uInt = p->get_internalEnergy();
        *metallicity = p->get_metallicity();
+       *turbulence = p->get_turbulence();
        
        return 1;
      }
@@ -567,7 +637,7 @@ int AMUSE_SimpleX::get_density(int id, double *rho){
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
         if (p->get_process() == COMM_RANK){
-            *rho = (double) p->get_n_HI() + (double) p->get_n_HII();
+            *rho = (double) p->get_n_HI() + (double) p->get_n_HII() + ((double) p->get_n_H2())*2.0 + ((double) p->get_n_C())*12. + ((double) p->get_n_O())*16. + ((double) p->get_n_CO())*28.;
             return 1;
         }
     }
@@ -589,6 +659,25 @@ int AMUSE_SimpleX::get_flux(int id, double *flux){
             }
           }
           *flux = totalFlux;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::get_fuv_flux(int id, double *fuv_flux){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if (p->get_process() == COMM_RANK){
+          double totalFlux = 0.0;
+          if( p->get_source() ){
+            totalFlux += p->get_fuv_flux();
+          }
+          *fuv_flux = totalFlux;
             return 1;
         }
     }
@@ -617,7 +706,39 @@ int AMUSE_SimpleX::get_mean_intensity(int id, double *mean_intensity){
             meanIntensity += p->get_intensityOut(f,i) + p->get_intensityIn(f,i);
           }
         }
-        *mean_intensity = meanIntensity;
+        *mean_intensity = meanIntensity/2. / UNIT_T;
+        return 1;
+      }
+  }
+  return 0;
+   
+}
+
+int AMUSE_SimpleX::get_fuv_intensity(int id, double *fuv_intensity){
+  
+  SITE_ITERATOR p;
+  Site tmp;
+    
+  tmp.set_vertex_id((unsigned long long) id);
+  p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+  if(p->get_vertex_id() == (unsigned long long int)id){
+      if (p->get_process() == COMM_RANK){
+        
+        double meanIntensity = 0.0;
+        //in case of ballistic transport, intensity has size of number of neighbours;
+        //in case of direction conserving transport, intensity has 
+        //the size of the tesselation of the unit sphere
+        if (fuvprop) {
+          numPixels = ( p->get_ballistic() ) ? p->get_numNeigh() : number_of_directions;
+        
+          for(unsigned int i=0; i<numPixels; i++){
+            meanIntensity += p->get_intensityOut(numFreq,i);// + p->get_intensityIn(numFreq,i);
+          }
+          // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
+          // to the 2/3 power. Together with straight_correction_factor, they allow for a good
+          // approximation for a cell's cross section
+          *fuv_intensity = (meanIntensity * UNIT_P / UNIT_T / ( pow((double) p->get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) )) / G0;
+        }
         return 1;
       }
   }
@@ -642,12 +763,30 @@ int AMUSE_SimpleX::get_diffuse_intensity(int id, double *diffuse_intensity){
           short int f = 0;
           diffuseIntensity += p->get_intensityOut(f,i) + p->get_intensityIn(f,i);
         }
-        *diffuse_intensity = diffuseIntensity;
+        *diffuse_intensity = diffuseIntensity/2. / UNIT_T;
         return 1;
       }
   }
   return 0;
    
+}
+
+int AMUSE_SimpleX::get_effective_surface(int id, double *surface){
+
+  SITE_ITERATOR p;
+  Site tmp;
+
+  tmp.set_vertex_id((unsigned long long) id);
+  p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+  if(p->get_vertex_id() == (unsigned long long int)id){
+    if (p->get_process() == COMM_RANK){
+
+      *surface = (double) p->get_surface();
+      return 1;
+    }
+  }
+  return 0;
+
 }
 
 int AMUSE_SimpleX::get_ionisation(int id, double *xion){
@@ -658,7 +797,37 @@ int AMUSE_SimpleX::get_ionisation(int id, double *xion){
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
         if (p->get_process() == COMM_RANK){
-            *xion = (double) p->get_n_HII() / ((double) p->get_n_HI() + (double) p->get_n_HII());
+            *xion = (double) p->get_n_HII() / ((double) p->get_n_HI() + (double) p->get_n_HII() + 2.0*((double) p->get_n_H2()));
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::get_molecular_fraction(int id, double *xmol){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if (p->get_process() == COMM_RANK){
+            *xmol = (double) p->get_n_H2() / ((double) p->get_n_HI() + (double) p->get_n_HII() + 2.0*((double) p->get_n_H2())) * 2.0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::get_CO_fraction(int id, double *xCO){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if (p->get_process() == COMM_RANK){
+            *xCO  = 2.*((double) p->get_n_CO())/( (double) p->get_n_C() + (double) p->get_n_O() + 2.*((double) p->get_n_CO()));
             return 1;
         }
     }
@@ -674,6 +843,21 @@ int AMUSE_SimpleX::get_metallicity(int id, double *metallicity){
     if(p->get_vertex_id() == (unsigned long long int)id){
         if (p->get_process() == COMM_RANK){
             *metallicity = (double) p->get_metallicity();
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::get_turbulence(int id, double *turbulence){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if (p->get_process() == COMM_RANK){
+            *turbulence = (double) p->get_turbulence();
             return 1;
         }
     }
@@ -720,7 +904,7 @@ int AMUSE_SimpleX::get_dinternalEnergydt(int id, double *uInt){
 
 //set properties of specified site
 int AMUSE_SimpleX::set_site(int id, double x, double y, double z, double rho,
-                                              double flux, double xion, double uInt, double metallicity){
+                                              double flux, double xion, double uInt, double xmol, double metallicity, double fuv_flux, double xCO, double turbulence){
     SITE_ITERATOR p;
     Site tmp;
     
@@ -731,19 +915,28 @@ int AMUSE_SimpleX::set_site(int id, double x, double y, double z, double rho,
         p->set_y(y);
         p->set_z(z);
         //set number of ionising photons
-        if(flux > 0.0){
+        if(flux > 0.0 || fuv_flux > 0.0){
           if(p->get_source()==0) p->create_flux(numFreq);
           p->set_source(1);
           p->set_flux( 0, flux );
           for(int f=1;f<numFreq;f++) p->set_flux(f,0.);
+          p->set_fuv_flux( fuv_flux );
         }else{
           if(p->get_source()==1) p->delete_flux();
           p->set_source(0);
         }
-        p->set_n_HI((1-xion)*rho);
-        p->set_n_HII(xion*rho);
+        p->set_n_HI((1-xion-xmol)*rho*rho_frac_H);
+        p->set_n_HII(xion*rho*rho_frac_H);
+        p->set_n_H2(xmol*rho*0.5*rho_frac_H);
+
+        p->set_n_C((1.-xCO)/12.*rho*rho_frac_C);
+        p->set_n_O((1.-xCO)/16.*rho*rho_frac_O);
+        p->set_n_CO(xCO/28.*rho*(rho_frac_C + rho_frac_C));
+
 	      p->set_internalEnergy( uInt );
         p->set_metallicity( metallicity );
+        p->set_turbulence( turbulence );
+        p->set_fuv_flux( fuv_flux );
         
         return 1;
     }
@@ -772,9 +965,13 @@ int AMUSE_SimpleX::set_density(int id, double rho){
     tmp.set_vertex_id((unsigned long long) id);
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
-        double old_rho = (double) p->get_n_HI() + (double) p->get_n_HII();
+        double old_rho = (double) p->get_n_HI() + (double) p->get_n_HII() + ((double) p->get_n_H2())*2.0 + ((double) p->get_n_C())*12.0 + ((double) p->get_n_O())*16.0 + ((double) p->get_n_CO())*28.0;
         p->set_n_HI((double) p->get_n_HI() * rho/old_rho);
         p->set_n_HII((double) p->get_n_HII() * rho/old_rho);
+        p->set_n_H2((double) p->get_n_H2() * rho/old_rho);
+        p->set_n_C((double) p->get_n_C() * rho/old_rho);
+        p->set_n_O((double) p->get_n_O() * rho/old_rho);
+        p->set_n_CO((double) p->get_n_CO() * rho/old_rho);
         return 1;
     }
     return 0;
@@ -801,6 +998,25 @@ int AMUSE_SimpleX::set_flux(int id, double flux){
     return 0;
 }
 
+int AMUSE_SimpleX::set_fuv_flux(int id, double fuv_flux){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if(fuv_flux > 0.0){
+          p->set_source(1);
+          p->set_fuv_flux( fuv_flux );
+        }else{
+          if(p->get_source()==1) p->delete_flux();
+          p->set_source(0);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int AMUSE_SimpleX::set_ionisation(int id, double xion){
     SITE_ITERATOR p;
     Site tmp;
@@ -808,9 +1024,48 @@ int AMUSE_SimpleX::set_ionisation(int id, double xion){
     tmp.set_vertex_id((unsigned long long) id);
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
-        double rho = (double) p->get_n_HI() + (double) p->get_n_HII();
-        p->set_n_HI((1-xion)*rho);
+        double rho = (double) p->get_n_HI() + (double) p->get_n_HII() + ((double) p->get_n_H2())*2.0;
+        double xmol = ((double) p->get_n_H2())/rho*2.0;
+        if (xion + xmol > 1.0) { xmol = 1.0 - xion; }
+        p->set_n_HI((1-xion-xmol)*rho);
         p->set_n_HII(xion*rho);
+        p->set_n_H2(xmol*rho*0.5);
+        return 1;
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::set_molecular_fraction(int id, double xmol){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        double rho = (double) p->get_n_HI() + (double) p->get_n_HII() + ((double) p->get_n_H2())*2.0;
+        double xion = ((double) p->get_n_HII())/rho;
+        if (xion + xmol > 1.0) { xion = 1.0 - xmol; }
+        p->set_n_HI((1-xion-xmol)*rho);
+        p->set_n_HII(xion*rho);
+        p->set_n_H2(xmol*rho*0.5);
+        return 1;
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::set_CO_fraction(int id, double xCO){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+        if (xCO > xCO_max) { xCO = xCO_max; }
+        double rho_C = ((double) p->get_n_O())*12.;
+        double rho_O = ((double) p->get_n_O())*16.;
+        p->set_n_C(rho_C*(1. - xCO)/12.);
+        p->set_n_O(rho_O*(1. - xCO)/16.);
+        p->set_n_CO((rho_C + rho_O)*xCO/28.);
         return 1;
     }
     return 0;
@@ -824,6 +1079,19 @@ int AMUSE_SimpleX::set_metallicity(int id, double metallicity){
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
       p->set_metallicity( metallicity );
+      return 1;
+    }
+    return 0;
+}
+
+int AMUSE_SimpleX::set_turbulence(int id, double turbulence){
+    SITE_ITERATOR p;
+    Site tmp;
+    
+    tmp.set_vertex_id((unsigned long long) id);
+    p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
+    if(p->get_vertex_id() == (unsigned long long int)id){
+      p->set_turbulence( turbulence );
       return 1;
     }
     return 0;
@@ -895,7 +1163,7 @@ int recommit_particles() {
 }
 
 int new_particle(int *id, double x,double y,double z,double rho,
-                                        double flux,double xion, double uInt, double metallicity ){
+                                        double flux,double xion,double uInt,double xmol, double metallicity, double fuv_flux, double xCO, double turbulence ){
                                           
                                                                                   
     long tmp_id;
@@ -916,10 +1184,10 @@ int new_particle(int *id, double x,double y,double z,double rho,
     *id = lastid++;
     tmp_id = *id;
     if((*SimpleXGrid).get_syncflag() == -1) {
-        return (*SimpleXGrid).add_vertex(&tmp_id, x, y, z, rho, flux, xion, uInt, metallicity);
+        return (*SimpleXGrid).add_vertex(&tmp_id, x, y, z, rho, flux, xion, uInt, xmol, metallicity, fuv_flux, xCO, turbulence);
     }
     if((*SimpleXGrid).get_syncflag() >= 0) {
-        ret=(*SimpleXGrid).add_site(&tmp_id, x, y, z, rho, flux, xion, uInt, metallicity);
+        ret=(*SimpleXGrid).add_site(&tmp_id, x, y, z, rho, flux, xion, uInt, xmol, metallicity, fuv_flux, xCO, turbulence);
         MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
         return totalret-1;
     }
@@ -951,32 +1219,40 @@ int set_time(double t){
 }
 
 int get_state(int id, double *x, double *y, double *z, double *rho,
-                                           double *flux, double *xion, double *uInt, double *metallicity){
-    double fx=0.0, fy=0.0, fz=0.0, frho=0.0, fflux=0.0, fxion=0.0, fuInt=0.0, fmetallicity=0.0;
-    double send[8], recv[8];
+                                           double *flux, double *xion, double *uInt, double *xmol, double *metallicity, double *fuv_flux, double *xCO, double *turbulence){
+    double fx=0.0, fy=0.0, fz=0.0, frho=0.0, fflux=0.0, fxion=0.0, fxmol=0.0, fuInt=0.0, fmetallicity=0.0, ffuv_flux=0.0, fxCO=0.0, fturbulence=0.0;
+    double send[12], recv[12];
     int ret, totalret=0;
     double bs;
     
     (*SimpleXGrid).get_sizeBox(&bs);
     if(bs==0) return -2;  
     
-    ret=(*SimpleXGrid).get_site(id, &fx, &fy, &fz, &frho, &fflux, &fxion, &fuInt, &fmetallicity);
+    ret=(*SimpleXGrid).get_site(id, &fx, &fy, &fz, &frho, &fflux, &fxion, &fuInt, &fxmol, &fmetallicity, &ffuv_flux, &fxCO, &fturbulence);
     MPI_Reduce(&ret,&totalret,1,MPI_INT,MPI_SUM,0, MPI_COMM_WORLD ); 
-    send[0]=fx;send[1]=fy;send[2]=fz;send[3]=frho;send[4]=fflux;send[5]=fxion;send[6]=fuInt;send[7]=fmetallicity;
-    MPI_Reduce(&send[0],&recv[0],8,MPI_DOUBLE,MPI_SUM,0, MPI_COMM_WORLD ); 
+    send[0]=fx;send[1]=fy;send[2]=fz;send[3]=frho;send[4]=fflux;send[5]=fxion;send[6]=fuInt;send[7]=fxmol;send[8]=fmetallicity;send[9]=ffuv_flux;send[10]=fxCO;send[11]=fturbulence;
+    MPI_Reduce(&send[0],&recv[0],12,MPI_DOUBLE,MPI_SUM,0, MPI_COMM_WORLD ); 
     MPI_Barrier(MPI_COMM_WORLD);
     fx=recv[0];fy=recv[1];fz=recv[2];
     frho=recv[3];
     fflux=recv[4];
     fxion=recv[5];
     fuInt=recv[6];
-    fmetallicity=recv[7];
+    fxmol=recv[7];
+    fmetallicity=recv[8];
+    ffuv_flux=recv[9];
+    fxCO=recv[10];
+    fturbulence=recv[11];
     *x=(fx-0.5)*bs;*y=(fy-0.5)*bs;*z=(fz-0.5)*bs;
     *rho=frho;
     *flux=fflux;
     *xion=fxion;
+    *xmol=fxmol;
+    *xCO=fxCO;
     *uInt=fuInt;
     *metallicity=fmetallicity;
+    *turbulence=fturbulence;
+    *fuv_flux=ffuv_flux;
     return totalret-1;
 }
 
@@ -1030,6 +1306,20 @@ int get_flux(int id, double *flux){
     return totalret-1;
 }
 
+int get_fuv_flux(int id, double *fuv_flux){
+    double ffuv_flux=0.0;
+    double send, recv;
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).get_fuv_flux(id, &ffuv_flux);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = ffuv_flux;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *fuv_flux = recv;
+    return totalret-1;
+}
+
 int get_mean_intensity(int id, double *mean_intensity){
     double fmean_intensity = 0.0;
     double send, recv;
@@ -1041,6 +1331,20 @@ int get_mean_intensity(int id, double *mean_intensity){
     MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
     MPI_Barrier(MPI_COMM_WORLD);
     *mean_intensity = recv;
+    return totalret-1;
+}
+
+int get_fuv_intensity(int id, double *fuv_intensity){
+    double fmean_intensity = 0.0;
+    double send, recv;
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).get_fuv_intensity(id, &fmean_intensity);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = fmean_intensity;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *fuv_intensity = recv;
     return totalret-1;
 }
 
@@ -1058,6 +1362,20 @@ int get_diffuse_intensity(int id, double *diffuse_intensity){
     return totalret-1;
 }
 
+int get_effective_surface(int id, double *surface){
+    double fsurface = 0.0;
+    double send, recv;
+    int ret, totalret;
+
+    ret = (*SimpleXGrid).get_effective_surface(id, &fsurface);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = fsurface;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *surface = recv;
+    return totalret-1;
+}
+
 int get_ionisation(int id, double *xion){
     double fxion=0.0;
     double send, recv;
@@ -1072,6 +1390,34 @@ int get_ionisation(int id, double *xion){
     return totalret-1;
 }
 
+int get_molecular_fraction(int id, double *xmol){
+    double fxmol=0.0;
+    double send, recv;
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).get_molecular_fraction(id, &fxmol);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = fxmol;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *xmol = recv;
+    return totalret-1;
+}
+
+int get_CO_fraction(int id, double *xCO){
+    double fxCO=0.0;
+    double send, recv;
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).get_CO_fraction(id, &fxCO);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = fxCO;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *xCO = recv;
+    return totalret-1;
+}
+
 int get_metallicity(int id, double *metallicity){
     double fmetallicity=0.0;
     double send, recv;
@@ -1083,6 +1429,20 @@ int get_metallicity(int id, double *metallicity){
     MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
     MPI_Barrier(MPI_COMM_WORLD);
     *metallicity = recv;
+    return totalret-1;
+}
+
+int get_turbulence(int id, double *turbulence){
+    double fturbulence=0.0;
+    double send, recv;
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).get_turbulence(id, &fturbulence);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    send = fturbulence;
+    MPI_Reduce(&send, &recv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    *turbulence = recv;
     return totalret-1;
 }
 
@@ -1116,7 +1476,7 @@ int get_dinternal_energy_dt(int id, double *dudt){
 
 
 int set_state(int id, double x, double y, double z, double rho,
-                                           double flux, double xion, double uInt, double metallicity){
+                                           double flux, double xion, double uInt, double xmol, double metallicity, double fuv_flux, double xCO, double turbulence){
     int ret,totalret;
     double bs;
     
@@ -1127,7 +1487,7 @@ int set_state(int id, double x, double y, double z, double rho,
         y<0 || y>1 ||
         z<0 || z>1 ) return -3;
           
-    ret = (*SimpleXGrid).set_site(id, x, y, z, rho, flux, xion, uInt, metallicity);
+    ret = (*SimpleXGrid).set_site(id, x, y, z, rho, flux, xion, uInt, xmol, metallicity, fuv_flux, xCO, turbulence);
     MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
     MPI_Barrier(MPI_COMM_WORLD);
     return totalret-1;
@@ -1168,6 +1528,15 @@ int set_flux(int id, double flux){
     return totalret-1;
 }
 
+int set_fuv_flux(int id, double fuv_flux){
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).set_fuv_flux(id, fuv_flux);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    return totalret-1;
+}
+
 int set_ionisation(int id, double xion){
     int ret, totalret;
     
@@ -1177,10 +1546,37 @@ int set_ionisation(int id, double xion){
     return totalret-1;
 }
 
+int set_molecular_fraction(int id, double xmol){
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).set_molecular_fraction(id, xmol);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    return totalret-1;
+}
+
+int set_CO_fraction(int id, double xCO){
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).set_CO_fraction(id, xCO);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    return totalret-1;
+}
+
 int set_metallicity(int id, double metallicity){
     int ret, totalret;
     
     ret = (*SimpleXGrid).set_metallicity(id, metallicity);
+    MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
+    MPI_Barrier(MPI_COMM_WORLD);
+    return totalret-1;
+}
+
+int set_turbulence(int id, double turbulence){
+    int ret, totalret;
+    
+    ret = (*SimpleXGrid).set_turbulence(id, turbulence);
     MPI_Reduce(&ret, &totalret, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD );
     MPI_Barrier(MPI_COMM_WORLD);
     return totalret-1;
@@ -1216,6 +1612,22 @@ int set_box_size(double bs){
 
 int get_box_size(double *bs){
   return (*SimpleXGrid).get_sizeBox(bs);
+}
+
+int set_cosmic_ray_ionization_rate(double cr_ir){
+  return (*SimpleXGrid).set_cosmic_ray_ionization_rate(cr_ir);
+}
+
+int get_cosmic_ray_ionization_rate(double *cr_ir){
+  return (*SimpleXGrid).get_cosmic_ray_ionization_rate(cr_ir);
+}
+
+int set_interstellar_fuv_field(double isrf){
+  return (*SimpleXGrid).set_interstellar_fuv_field(isrf);
+}
+
+int get_interstellar_fuv_field(double *isrf){
+  return (*SimpleXGrid).get_interstellar_fuv_field(isrf);
 }
 
 int set_timestep(double ts){
@@ -1302,7 +1714,37 @@ int get_blackbody_spectrum(int *ts){
   return (*SimpleXGrid).get_blackBody(ts);
 }
 
+int set_dust_interactions(int ts){
+  return (*SimpleXGrid).set_dust(ts);
+}
 
+int get_dust_interactions(int *ts){
+  return (*SimpleXGrid).get_dust(ts);
+}
+
+int set_molecular_processes(int ts){
+  return (*SimpleXGrid).set_molecular(ts);
+}
+
+int get_molecular_processes(int *ts){
+  return (*SimpleXGrid).get_molecular(ts);
+}
+
+int set_carbmonox(int ts){
+  return (*SimpleXGrid).set_carb_monox(ts);
+}
+
+int get_carbmonox(int *ts){
+  return (*SimpleXGrid).get_carb_monox(ts);
+}
+
+int set_fuv_propagation(int ts){
+  return (*SimpleXGrid).set_fuvprop(ts);
+}
+
+int get_fuv_propagation(int *ts){
+  return (*SimpleXGrid).get_fuvprop(ts);
+}
 
 
 int commit_parameters(){
