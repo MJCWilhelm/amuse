@@ -354,9 +354,11 @@ int AMUSE_SimpleX::initialize(double current_time) {
   if( COMM_RANK == 0 ){
     surfaces.clear();
     surfaces.resize(vertices.size(), 0.);
-    if (fuvprop)
+    if (fuvprop && interstellar_fuv_field > 0.)
       compute_surfaces();
   }
+
+  send_surfaces();
 
   //create a site at each vertex from the list of simplices that was obtained 
   //from the triangulation functions, containing the physical parameters
@@ -395,15 +397,15 @@ int AMUSE_SimpleX::setup_simplex(){
 
 //evolve the radiative transfer over time t_target
 int AMUSE_SimpleX::evolve(double t_target, int sync) {
-    
+
   double dt= t_target*secondsPerMyr - total_time;
   
   //cout << "time: " << t_target << " " << dt << "\n"; 
- 
+
   if(syncflag==1){
     reinitialize();
   }
- 
+
   // if(COMM_RANK == 0){
   //   cerr << "AMUSE_SimpleX: performing radiation transport...";
   // }
@@ -453,11 +455,11 @@ int AMUSE_SimpleX::reinitialize(){
    //make sure that the vectors that will be filled are empty 
     site_intensities.clear();
     intens_ids.clear();
-    
+
     //make sure that photons have left all ghost vertices 
     //before calculating local intensities
     send_intensities();
-
+ 
     //store the intensities in big array
     store_intensities();
 
@@ -466,7 +468,7 @@ int AMUSE_SimpleX::reinitialize(){
 
     store_ballistic_intensities( sites_to_store );
     sites_to_store.clear();
-
+ 
     //remember the orientation index with which the intensities were stored
     orientation_index_old = orientation_index;
 
@@ -476,19 +478,19 @@ int AMUSE_SimpleX::reinitialize(){
 
     //create a list of vertices to be triangulated
     create_new_vertex_list();
-
+   
     //clear temporary structures in the sites 
     //and completely clear the sites vector
     clear_temporary();
     sites.clear();
     vector< Site >().swap(sites);
-
+  
     simplices.clear();
     vector< Simpl >().swap(simplices);
-
+  
     //send the list to master proc
     send_new_vertex_list();
- 
+
     // if( COMM_RANK == 0 ){
     //   cerr << " (" << COMM_RANK << ") Computing triangulation" << endl;
     // }
@@ -513,7 +515,7 @@ int AMUSE_SimpleX::reinitialize(){
       vertices.clear();
       vector< Vertex >().swap(vertices);
     }
-
+  
     //send the vertex positions round to all procs, so every proc (temporary!) has its own copy
     send_vertices();
 
@@ -537,14 +539,13 @@ int AMUSE_SimpleX::reinitialize(){
     compute_triangulation();
 
     if( COMM_RANK == 0 ){
-      if (fuvprop)
+      surfaces.clear();
+      surfaces.resize(vertices.size(), 0.);
+      if (fuvprop && interstellar_fuv_field > 0.)
         compute_surfaces();
-      else{
-        surfaces.resize(vertices.size(), 0.);
-        for (int i = 0; i < vertices.size(); i++)
-          surfaces[i] = 0.;
-      }
     }
+
+    send_surfaces();
 
     //create the sites vector from the vertex list
     create_sites();

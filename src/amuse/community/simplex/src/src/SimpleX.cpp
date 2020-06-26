@@ -197,9 +197,11 @@ void SimpleX::init_triangulation(char* inputName){
   if( COMM_RANK == 0 ) {
     surfaces.clear();
     surfaces.resize(vertices.size(), 0.);
-    if (fuvprop)
+    if (fuvprop && interstellar_fuv_field > 0.)
       compute_surfaces();
   }
+
+  send_surfaces();
 
   //create a site at each vertex from the list of simplices that was obtained 
   //from the triangulation functions, containing the physical parameters
@@ -1766,8 +1768,10 @@ void SimpleX::create_sites(){
   }
 
   // Assign exposed surface area to all non-border sites
-  for (int i = 0; i < vertices.size()-borderSites; i++)
-    sites[indices[i]].set_surface( surfaces[ i ] );
+  for (int i = 0; i < vertices.size()-borderSites; i++) {
+    if (indices[i] != vertices.size()+1)
+      sites[indices[i]].set_surface( surfaces[ i ] );
+  }
 
 
   MPI_Allreduce( &local_numSites, &numSites, 1, MPI_UNSIGNED, MPI_SUM , MPI_COMM_WORLD );
@@ -4377,6 +4381,70 @@ void SimpleX::send_vertices(){
 
   if( COMM_RANK == 0 ){
     simpleXlog << "  Vertices sent to all procs " << endl;
+  }
+
+}
+
+/****  Send all surfaces to all processors  ****/
+void SimpleX::send_surfaces(){
+
+  //make sure every proc knows the number of sites
+  MPI_Bcast(&numSites,1,MPI_UNSIGNED,0, MPI_COMM_WORLD );
+
+  //if there's a lot of vertices, send in chunks
+  unsigned int num_chunks = 1;
+  if( numSites > max_msg_to_send ){
+    num_chunks = (unsigned int) ceil( (double) numSites/max_msg_to_send);
+  }
+
+  //make sure vertices vector is empty on all procs except master
+  //and give correct size
+  if(COMM_RANK != 0){
+    surfaces.clear();
+    vector<float>().swap(surfaces);
+  }
+
+  //send the vertices to other procs in chunks
+  for(unsigned int i=0; i<num_chunks; i++ ){
+
+    //size of the chunk to send
+    unsigned int this_chunk_size = max_msg_to_send;
+    //start id of current chunk
+    unsigned int start_vertex_id = i*max_msg_to_send; 
+    //make sure the final chunk has correct size
+    if( start_vertex_id + this_chunk_size >= numSites ){
+      this_chunk_size = numSites - start_vertex_id;
+    }
+
+    //temporary vector to hold the vertices
+    vector< float > temp(this_chunk_size);
+    //temp.resize( this_chunk_size );    
+    //Vertex.construct_datatype();
+
+    //master fills temp
+    if(COMM_RANK == 0){
+      for(unsigned int j = start_vertex_id; j<(start_vertex_id+this_chunk_size); j++){
+	temp[ j - start_vertex_id ] = surfaces[j];
+      }
+    }
+
+    //broadcast this chunk
+    MPI_Bcast(&temp[0],this_chunk_size*sizeof(float),MPI_BYTE,0, MPI_COMM_WORLD );
+    //MPI_Bcast(&temp[0],this_chunk_size,Vertex::MPI_Type,0, MPI_COMM_WORLD );
+
+
+    //procs not master fill vertices vector from temp vector
+    if( COMM_RANK != 0 ){
+      surfaces.insert( surfaces.end(), temp.begin(), temp.end() );
+    }
+
+    //clear temp for next use
+    temp.clear();
+
+  }
+
+  if( COMM_RANK == 0 ){
+    simpleXlog << "  Surfaces sent to all procs " << endl;
   }
 
 }
@@ -7001,7 +7069,7 @@ double SimpleX::cooling_rate( Site& site ){
   if(metal_cooling){
     
     double total = 0.0;
-        
+
     //loop over metal line cooling curves
     for(unsigned int j=1; j<curves.size();j++){// j=1 because hydrogen is not taken into account here (but explicitly above)
       
@@ -7138,9 +7206,9 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
 
 double SimpleX::compute_mu(Site& site){
   
-  //double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() );
-  double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() + site.get_n_CO() + site.get_n_C() + site.get_n_O() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() + site.get_n_CO()/28. + site.get_n_C()/12. + site.get_n_O()/16. );
-  
+  double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() );
+  //double mu = ( site.get_n_HI() + site.get_n_HII() + site.get_n_H2() + site.get_n_CO() + site.get_n_C() + site.get_n_O() )/(site.get_n_HI() + 2*site.get_n_HII() + 0.5*site.get_n_H2() + site.get_n_CO()/28. + site.get_n_C()/12. + site.get_n_O()/16. );
+
   return mu;
   
 }
@@ -7251,14 +7319,12 @@ double SimpleX::update_temperature( Site& site, const vector<double>& N_ion, con
     }else if(u < u_min){
       u = u_min;
     }
-    
+
     //set new internal energy
     site.set_internalEnergy( (float) u );
   	//set temperature
     float T = static_cast<float>( u_to_T( u,  mu ) );
     site.set_temperature( T );
-
-
 
     //add time step to total time
     t += dt; 
@@ -7323,7 +7389,6 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   //in case of direction conserving transport, intensity has 
   //the size of the tesselation of the unit sphere
   numPixels = ( site.get_ballistic() ) ? site.get_numNeigh() : number_of_directions;
-
 
   for( unsigned int j=0; j < numPixels; j++) {
     for(short int f=0; f<numFreq;f++){
@@ -7579,13 +7644,11 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
       numDissociated_step = total_photo_dissociations_step;
 
-
       dens_cr = critical_density( N_HI_step/( n_H * (double) site.get_volume() * UNIT_V ), 2.*N_H2_step/( n_H * (double) site.get_volume() * UNIT_V ), (double) site.get_temperature() );
 
       numDissociated_step += dissoc_coeff_H_atom( n_H, (double) site.get_temperature(), dens_cr ) * N_HI_step * one_over_volume * initial_N_H2 * dt_ss;
 
       numDissociated_step += dissoc_coeff_H_molecule( n_H, (double) site.get_temperature(), dens_cr ) * N_H2_step * one_over_volume * initial_N_H2 * dt_ss;
-
 
       if ( numDissociated_step > N_H2_step){
         cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
@@ -7611,6 +7674,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       number_of_photo_dissociations += total_photo_dissociations_step;
 
     }
+
 
 	
 	double total_photo_ionisations_step = 0.0;
@@ -7765,7 +7829,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	//update temperature	
 	double t_heat = 0.0;
 	if(heat_cool){
-  
+
 	  t_heat = update_temperature( site, photo_ionisations_step, dt_ss);
 
 	}else{
@@ -7909,10 +7973,10 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
         if(rec_rad){
           photo_ionisations_heating_step[0] += N_rec_ion_eq;
         }
-                
+
 	      //calculate new temperature	    
 	      t_heat = update_temperature( site, photo_ionisations_step, dt2);
-
+  
 	      //this is no longer needed, so clear it
 	      photo_ionisations_heating_step.clear();
 
@@ -7991,7 +8055,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
       //send the recombination photons
       if(N_rec_phot > 0.0){
-        vector<double> N_out(numFreq,0.0);
+        vector<double> N_out(numFreq+fuvprop,0.0);
         N_out[0] = N_rec_phot/(UNIT_I);
         diffuse_transport( site, N_out );
       }
@@ -8088,8 +8152,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
       //set the correct temperature of the gas
       double t_heat = 0.0;
-      if(heat_cool){
-        t_heat = update_temperature( site, initial_N_retained_H, UNIT_T);
+      if(heat_cool){  
+        t_heat = update_temperature( site, initial_N_retained_H, UNIT_T);  
 	//if(site.get_temperature() > 100)
 	//cerr << " New temperature is: " << site.get_temperature() << " K" << endl;
       }else{
@@ -8131,7 +8195,8 @@ void SimpleX::source_transport( Site& site ){
         sites[ site.get_neighId(j) ].addRadiationDiffOut( f, site.get_outgoing(j), (float) inten ); 
       }
       if (fuvprop) {
-        double inten = (double) site.get_fuv_flux() * UNIT_T/site.get_numNeigh();
+        double isrf = (double) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P;
+        double inten = ((double) site.get_fuv_flux() + isrf )* UNIT_T/site.get_numNeigh();
         sites[ site.get_neighId(j) ].addRadiationDiffOut( numFreq, site.get_outgoing(j), (float) inten );
       }
     }
@@ -8162,7 +8227,8 @@ void SimpleX::source_transport( Site& site ){
               sites[neigh].addRadiationDiffOut( f, j, (float) inten );
             }
             if (fuvprop) {
-              double inten = (double) site.get_fuv_flux() * UNIT_T/numPixels;
+              double isrf = (double) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P;
+              double inten = ((double) site.get_fuv_flux() + isrf ) * UNIT_T/numPixels;
               sites[neigh].addRadiationDiffOut( numFreq, j, (float) inten );
             }
           } 
@@ -8188,8 +8254,8 @@ void SimpleX::source_transport( Site& site ){
 
   }//if ballistic
 
-  if (fuvprop)
-    site.addRadiationDiffIn(numFreq, 0, (float) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P * UNIT_T);
+  //if (fuvprop)
+  //  site.addRadiationDiffIn(numFreq, 0, (float) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P * UNIT_T);
 }
 
 
@@ -8207,6 +8273,7 @@ void SimpleX::diffuse_transport( Site& site, vector<double>& N_out_total ){
 
 	//loop over frequencies
         for(short int f=0; f<numFreq+fuvprop; f++){
+
           double inten = N_out_total[f]/site.get_numNeigh();
           sites[ neigh ].addRadiationDiffIn( f, site.get_outgoing(j), (float) inten ); 
         }
@@ -8712,7 +8779,7 @@ void SimpleX::radiation_transport( const unsigned int& run ){
           //transport photons with ballistic transport or DCT
           non_diffuse_transport( *it, N_out );
 
-        } else {
+        } else { 
           //transport photons diffusely
           diffuse_transport( *it, N_out );
 

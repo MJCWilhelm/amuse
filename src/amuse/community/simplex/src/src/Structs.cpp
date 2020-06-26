@@ -140,8 +140,11 @@ double cooling_curve::get_value(double T){
   double pos = ((logT-min)/delta)*double(elements-1);
   int posInt = floor(pos);
   double diff = pos - double(posInt);
+if (posInt >= Cooling.size() || posInt < 0) {
+    cout << posInt << " " << T << endl;
+}
   double value = Cooling[posInt]*(1-diff)+diff*Cooling[posInt+1];
-  
+
   return pow(10.0,value);
 
 }

@@ -85,9 +85,11 @@ double recomb_coeff_HII_caseA( const double& tempGas ) {
 // Recombination coefficient HII for grain-assisted recombination from Weingartner & Draine 2001
 double recomb_coeff_HII_grain( const double& tempGas, const double& n_e, const double& G, const double& phi_pah ) {
 
-  double psi = G/G0 * sqrt(tempGas)/(n_e*phi_pah);
+  double psi = G/G0 * sqrt(tempGas)/((n_e > 0. ? n_e : 1. )*phi_pah);
 
-  return 1.e-14 * 12.25 * pow((1.0 + 8.074e-6*pow(psi, 1.378)*(1.0 + 5.087e2*pow(tempGas, 1.586e-2)*pow(psi, -0.4723 - 1.102e-5*log(tempGas)))), -1.0);
+  double temp = G > 0. ? 8.074e-6*pow(psi, 1.378)*(1.0 + 5.087e2*pow(tempGas, 1.586e-2)*pow(psi, -0.4723 - 1.102e-5*log(tempGas))) : 0.;
+
+  return 1.e-14 * 12.25 * pow(1. + temp, -1.0);
 }
 
 /************************** Molecule Dissociation *****************************/
@@ -206,7 +208,7 @@ double enerfHI( double x, double T ){
 // Photoelectric heating from UV irradiated grains and PAHs from Bakes & Tielens 1994 and Wolfire et al. 2003
 double photoelectric_heating_coeff( const double& densElectron, const double& tempGas, const double& phi_pah, const double& G ) {
 
-  double psi = G/G0 * sqrt(tempGas)/(densElectron*phi_pah);
+  double psi = G/G0 * sqrt(tempGas)/((densElectron > 0. ? densElectron : 1. )*phi_pah);
   double epsilon = 4.9e-2/(1.0 + 4e-3*pow(psi, 0.73)) + 3.7e-2*pow(tempGas/1e4, 0.7)/(1.0 + 2e-4*psi);
 
   return 1.3e-24 * epsilon * G/G0;
@@ -287,7 +289,7 @@ double ff_cooling_coeff( const double& tempGas ){
 double recomb_cooling_coeff_HII_grain( const double& densElectron, const double& tempGas, const double& phi_pah, const double& G ) {
 
   double beta = 0.74/pow(tempGas, 0.068);
-  double psi = G/G0*sqrt(tempGas)/(densElectron*phi_pah);
+  double psi = G/G0*sqrt(tempGas)/((densElectron > 0. ? densElectron : 1. )*phi_pah);
 
   return 4.65e-30 * phi_pah * pow(tempGas, 0.94) * pow(psi, beta);
 
@@ -306,10 +308,10 @@ double H2_cooling_coeff( const double& tempGas, const double& densGas){
   double logT = log10(tempGas);
   double logn = log10(densGas);
 
-  if (tempGas < 100. || tempGas > 4000.) {
-    cout << "Temperature out of bounds (" << tempGas << " K), extrapolating fit\nExtrapolation likely safe" << endl;
-  }
-  else if (densGas < 1e-4 || densGas > 1e8) {
+  //if (tempGas < 100. || tempGas > 4000.) {
+  //  cout << "Temperature out of bounds (" << tempGas << " K), extrapolating fit\nExtrapolation likely safe" << endl;
+  //}
+  if (densGas < 1e-4 || densGas > 1e8) {
     cout << "Density out of bounds (" << densGas << " cm^-3), extrapolating fit\nExtrapolation potentially unsafe" << endl;
   }
 

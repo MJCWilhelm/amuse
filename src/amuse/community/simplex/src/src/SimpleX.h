@@ -268,6 +268,9 @@ class SimpleX{
     //! Send the domain decomposition to all procs
     void send_dom_dec();
 
+    //! Send the exposed surface list to all procs
+    void send_surfaces();
+
     //! Fill the list of indices of sites that contain information to be send 
     //! to other procs
     void fill_send_list();
