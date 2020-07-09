@@ -197,7 +197,7 @@ void SimpleX::init_triangulation(char* inputName){
   if( COMM_RANK == 0 ) {
     surfaces.clear();
     surfaces.resize(vertices.size(), 0.);
-    if (fuvprop && interstellar_fuv_field > 0.)
+    if ((fuvprop && interstellar_fuv_field > 0.) || hull_sink)
       compute_surfaces();
   }
 
@@ -6964,7 +6964,7 @@ double SimpleX::recombine(){
         vector<double> N_out(numFreq, 0.0);
         //put the recombination photons in zeroth bin
         N_out[0] = rec_escape * N_out_diffuse/UNIT_I;
-        if(N_out_diffuse > 0.0){
+        if((N_out_diffuse > 0.0) && ( !hull_sink || it->get_surface() == 0. )){
           diffuse_transport( *it, N_out );
         }
 
@@ -7623,6 +7623,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       N_C_step += numCODissociated_step;
       N_O_step += numCODissociated_step;
 
+
       number_of_CO_photo_dissociations += numCODissociated_step;
 
       num_form_CO = N_C_step * formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
@@ -7654,8 +7655,6 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
         cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
         numDissociated_step = N_H2_step;
       }
-
-
 
       N_H2_step -= numDissociated_step;
       N_HI_step += 2.0*numDissociated_step;
@@ -8057,7 +8056,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       if(N_rec_phot > 0.0){
         vector<double> N_out(numFreq+fuvprop,0.0);
         N_out[0] = N_rec_phot/(UNIT_I);
-        diffuse_transport( site, N_out );
+        if ( !hull_sink || site.get_surface() == 0. )
+          diffuse_transport( site, N_out );
       }
 
     }else{ //don't use temporal photon conservation scheme
@@ -8188,6 +8188,15 @@ void SimpleX::source_transport( Site& site ){
 
   //in case of ballistic transport, intensity has size of number of neighbours
   if( site.get_ballistic() ){
+    //isrf photons must only be sent to non-sink neighbors because of energy conservation
+    double num_nonsinks = site.get_numNeigh();
+    if (hull_sink) {
+      for (unsigned int j=0; j<site.get_numNeigh(); j++){
+        if (sites[ site.get_neighId(j) ].get_surface() > 0.)
+          num_nonsinks -= 1.;
+      }
+    }
+
     for( unsigned int j=0; j<site.get_numNeigh(); j++ ){
       //loop over frequencies
       for(short int f=0; f<numFreq; f++){
@@ -8196,7 +8205,7 @@ void SimpleX::source_transport( Site& site ){
       }
       if (fuvprop) {
         double isrf = (double) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P;
-        double inten = ((double) site.get_fuv_flux() + isrf )* UNIT_T/site.get_numNeigh();
+        double inten = ((double) site.get_fuv_flux()/site.get_numNeigh() + isrf/num_nonsinks ) * UNIT_T;
         sites[ site.get_neighId(j) ].addRadiationDiffOut( numFreq, site.get_outgoing(j), (float) inten );
       }
     }
@@ -8206,6 +8215,17 @@ void SimpleX::source_transport( Site& site ){
     //in case of direction conserving transport and combined transport, intensity has 
     //the size of the tesselation of the unit sphere
     numPixels = number_of_directions;
+
+    double num_nonsinks = (double) numPixels;
+    if (hull_sink) {
+      for ( unsigned int m=0; m<numPixels; m++ ){
+        unsigned int dir = (unsigned) site.get_outgoing(m);
+        unsigned int neigh = site.get_neighId( dir );
+        if (sites[ neigh ].get_surface() > 0.)
+          num_nonsinks -= 1.;
+      }
+    }
+
     for( unsigned int m=0; m<numPixels; m++ ){
       //unsigned int m = 0;
       //double inten = (double) it->get_flux()* UNIT_T;
@@ -8228,7 +8248,7 @@ void SimpleX::source_transport( Site& site ){
             }
             if (fuvprop) {
               double isrf = (double) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P;
-              double inten = ((double) site.get_fuv_flux() + isrf ) * UNIT_T/numPixels;
+              double inten = ((double) site.get_fuv_flux()/numPixels + isrf/num_nonsinks ) * UNIT_T;
               sites[neigh].addRadiationDiffOut( numFreq, j, (float) inten );
             }
           } 
@@ -8245,7 +8265,8 @@ void SimpleX::source_transport( Site& site ){
           sites[ neigh ].addRadiationDiffOut( f, m, (float) inten ); 
         }
         if (fuvprop) {
-          double inten = (double) site.get_fuv_flux() * UNIT_T/numPixels;
+          double isrf = (double) site.get_surface() * pow(parsecToCm, 2.) * interstellar_fuv_field / UNIT_P;
+          double inten = ((double) site.get_fuv_flux()/numPixels + isrf/num_nonsinks ) * UNIT_T;
           sites[ neigh ].addRadiationDiffOut( numFreq, m, (float) inten );
         }
       }
@@ -8775,14 +8796,18 @@ void SimpleX::radiation_transport( const unsigned int& run ){
         //solve the rate equation to determine ionisations and recombinations
         vector<double> N_out = solve_rate_equation( *it );
 
-        if(!diffuseTransport){
-          //transport photons with ballistic transport or DCT
-          non_diffuse_transport( *it, N_out );
+        // hull_sink means that sites on the convex hull are radiation sinks
+        // convex hull sites have surfaces > 0
+        if ( !hull_sink || it->get_surface() == 0. ) {
+          if(!diffuseTransport){
+            //transport photons with ballistic transport or DCT
+            non_diffuse_transport( *it, N_out );
 
-        } else { 
-          //transport photons diffusely
-          diffuse_transport( *it, N_out );
+          } else { 
+            //transport photons diffusely
+            diffuse_transport( *it, N_out );
 
+          }
         }
 
       }//if not in border   

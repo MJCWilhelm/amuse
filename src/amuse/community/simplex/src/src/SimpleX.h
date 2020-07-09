@@ -575,6 +575,7 @@ class SimpleX{
     bool molecular;                 //!< Set this to 1 to include molecular hydrogen chemistry/heating/cooling
     bool fuvprop;                   //!< Set this to 1 to include the propagation of FUV radiation
     bool carbmonox;                 //!< Set this to 1 to include CO chemistry and cooling
+    bool hull_sink;                 //!< Set this to 1 to make every site on the convex hull a radiation sink
 };
 
 #endif

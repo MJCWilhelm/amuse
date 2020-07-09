@@ -541,7 +541,7 @@ int AMUSE_SimpleX::reinitialize(){
     if( COMM_RANK == 0 ){
       surfaces.clear();
       surfaces.resize(vertices.size(), 0.);
-      if (fuvprop && interstellar_fuv_field > 0.)
+      if ((fuvprop && interstellar_fuv_field > 0.) || hull_sink)
         compute_surfaces();
     }
 
@@ -1737,6 +1737,14 @@ int set_carbmonox(int ts){
 
 int get_carbmonox(int *ts){
   return (*SimpleXGrid).get_carb_monox(ts);
+}
+
+int set_hullsink(int ts){
+  return (*SimpleXGrid).set_hull_sink(ts);
+}
+
+int get_hullsink(int *ts){
+  return (*SimpleXGrid).get_hull_sink(ts);
 }
 
 int set_fuv_propagation(int ts){

@@ -182,7 +182,9 @@ double formation_coeff_H2_grain( const double& tempGas, const double& tempDust )
 // Formation coefficient of CO from Nelson & Langer 1997
 double formation_coeff_CO( const double& densGas, const double& densH2, const double& densO, const double& G ) {
 
-    double beta = 1./( 1. + ( G/G0 / densH2 )/( densO/densGas ) );
+    double beta = 0.;
+    if (densH2 > 0. && densO > 0.)
+        beta = 1./( 1. + ( G/G0 / densH2 )/( densO/densGas ) );
 
     return 5e-16 * beta;
 }
@@ -279,7 +281,7 @@ double coll_excit_cooling_coeff_HI( const double& _T ){
 double ff_cooling_coeff( const double& tempGas ){  
 
   //gaunt factor  
-  double g_ff = 1.1 + 0.34 * exp( -0.33333333333 * pow(5.5-log(tempGas)/log(10), 2.0) );
+  double g_ff = 1.1 + 0.34 * exp( -0.33333333333 * pow(5.5-log(tempGas)/log(10.), 2.0) );
 
   return 1.42e-27 * g_ff * sqrt( tempGas );// This must be multiplied with (n_HII + n_HeII + 4 n_HeIII) * n_e
 
@@ -355,8 +357,12 @@ double CO_cooling_coeff( const double& densGas, const double& densH2, const doub
 
 
   double LabdaLO = 2.16e-27 * densH2 * pow(tempGas, 3./2.);
-  double LabdaHI = 2.21e-28 / densH2 * pow(tempGas, 4.0) / ( densCO/densGas * t_ff / (megaParsecToCm * 1e-11 ) ) * turbulence;
-  double beta = 1.23 * pow(densH2, 0.0533) * pow(tempGas, 0.164);
+  double LabdaHI = 0.;
+  if (densH2 > 0. && densCO > 0.)
+    LabdaHI = 2.21e-28 / densH2 * pow(tempGas, 4.0) / ( densCO/densGas * t_ff / (megaParsecToCm * 1e-11 ) ) * turbulence;
+  double beta = 1.;
+  if (densH2 > 0.)
+    beta = 1.23 * pow(densH2, 0.0533) * pow(tempGas, 0.164);
 
   return pow(pow(LabdaLO, -1.0/beta) + pow(LabdaHI, -1.0/beta), -beta);
 }

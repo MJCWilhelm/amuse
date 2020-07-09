@@ -845,6 +845,20 @@ class SimpleXInterface(CodeInterface, CommonCodeInterface, LiteratureReferencesM
         function.addParameter('carbonmonoxide_flag', dtype='int32', direction=function.OUT)
         function.result_type = 'int32'
         return function
+
+    @legacy_function
+    def set_hullsink():
+        function = LegacyFunctionSpecification()
+        function.addParameter('hull_sink_flag', dtype='int32', direction=function.IN)
+        function.result_type = 'int32'
+        return function
+
+    @legacy_function
+    def get_hullsink():
+        function = LegacyFunctionSpecification()
+        function.addParameter('hull_sink_flag', dtype='int32', direction=function.OUT)
+        function.result_type = 'int32'
+        return function
     
     def synchronize_model(self):
         pass
@@ -998,6 +1012,15 @@ class SimpleX(CommonCode):
             "not do CO chemistry and cooling if 0, do if 1\nCooling of course only in conjunction with thermal_flag",
             default_value = 0
         )
+
+        handler.add_method_parameter(
+            "get_hullsink",
+            "set_hullsink",
+            "convex_hull_sink_flag",
+            "if 1, all sites on the convex hull are radiation sinks",
+            default_value = 0
+        )
+
 
         handler.add_method_parameter(
             "get_box_size",
@@ -1545,6 +1568,18 @@ class SimpleX(CommonCode):
     
         handler.add_method(
             "set_carbmonox",
+            (handler.NO_UNIT, ),
+            (handler.ERROR_CODE,)
+        )
+
+        handler.add_method(
+            "get_hullsink",
+            (),
+            (handler.NO_UNIT, handler.ERROR_CODE,)
+        )
+    
+        handler.add_method(
+            "set_hullsink",
             (handler.NO_UNIT, ),
             (handler.ERROR_CODE,)
         )

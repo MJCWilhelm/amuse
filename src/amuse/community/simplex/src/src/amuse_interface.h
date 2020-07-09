@@ -111,6 +111,8 @@ class AMUSE_SimpleX : public SimpleX {
 
     return 0;}
   int get_carb_monox(int *ts){ *ts = carbmonox;return 0;}
+  int set_hull_sink(int ts){ hull_sink = ts;return 0;}
+  int get_hull_sink(int *ts){ *ts = hull_sink;return 0;}
  
   
   int set_numBorderSites(int ts){ borderSites=ts;return 0;}
