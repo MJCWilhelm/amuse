@@ -64,6 +64,17 @@ double coll_ion_coeff_HI( const double& _T ){
 
 }
 
+double Xray_ionisations (const double& Nw, const double& n_e, const double& n_H){
+
+  double p1 = log10(Nw / 1e18);
+  double p2 = n_e > 0. ? log10(n_e/n_H) : -9.;
+
+  double f4 = 1.06 + 4.08e-2 * p2 + 6.51e-3 * p2*p2;
+  double f5 = 1.90 + 0.678 * p2 + 0.113 * p2*p2;
+
+  return pow(10., 4*(-15.6 - 1.10*p1 + 9.13e-2*p1*p1) + f5*0.87*exp(-pow((p1-0.41)/0.84, 2.)));
+}
+
 
 /************************** Recombinations ************************************/
 
@@ -244,6 +255,15 @@ double cosmic_ray_heating_coeff( const double& cr_ir ) {
   return 3.2e-28 * (cr_ir/1e-17);
 }
 
+double Xray_heating_coeff(const double& Nw, const double& n_e, const double& n_H){
+
+  double p1 = log10(Nw / 1e18);
+  double p2 = n_e > 0. ? log10(n_e/n_H) : -9.;
+
+  double f6 = 0.990 - 2.74e-3 * p2 + 1.13e-3 * p2*p2;
+
+  return pow(10., f6*(-26.5 - 0.920 * p1 + 5.89e-2 * p1*p1) + f6*0.96*exp(-pow((p1-0.38)/0.87, 2.)));
+}
 
 /************************** Cooling ******************************************/
 

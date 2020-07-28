@@ -738,7 +738,7 @@ int AMUSE_SimpleX::get_fuv_intensity(int id, double *fuv_intensity){
           // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
           // to the 2/3 power. Together with straight_correction_factor, they allow for a good
           // approximation for a cell's cross section
-          *fuv_intensity = (meanIntensity * UNIT_P / UNIT_T / ( pow((double) p->get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) )) / G0;
+          *fuv_intensity = (meanIntensity * UNIT_P / UNIT_T / ( pow((double) p->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) )) / G0;
         }
         return 1;
       }
@@ -828,7 +828,10 @@ int AMUSE_SimpleX::get_CO_fraction(int id, double *xCO){
     p=lower_bound(sites.begin(), sites.end(), tmp, compare_vertex_id_site);
     if(p->get_vertex_id() == (unsigned long long int)id){
         if (p->get_process() == COMM_RANK){
-            *xCO  = 2.*((double) p->get_n_CO())/( (double) p->get_n_C() + (double) p->get_n_O() + 2.*((double) p->get_n_CO()));
+            if (carbmonox)
+              *xCO  = 2.*((double) p->get_n_CO())/( (double) p->get_n_C() + (double) p->get_n_O() + 2.*((double) p->get_n_CO()));
+            else
+              *xCO = 0.;
             return 1;
         }
     }

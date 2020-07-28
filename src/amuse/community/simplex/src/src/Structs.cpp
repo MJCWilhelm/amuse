@@ -131,17 +131,17 @@ double cooling_curve::get_value(double T){
 
   double logT = log10(T);
 
-  if(logT>max)
+  if(logT>=max)
     return pow(10.0, Cooling.back());// return the last entry
 
-  if(logT<min)
+  if(logT<=min)
     return pow(10.0, Cooling.front());// return the first entry
 
   double pos = ((logT-min)/delta)*double(elements-1);
   int posInt = floor(pos);
   double diff = pos - double(posInt);
-if (posInt >= Cooling.size() || posInt < 0) {
-    cout << posInt << " " << T << endl;
+if (posInt+1 >= Cooling.size() || posInt < 0) {
+    cout << posInt << " " << T << " " << logT << " " << min << " " << max << endl;
 }
   double value = Cooling[posInt]*(1-diff)+diff*Cooling[posInt+1];
 

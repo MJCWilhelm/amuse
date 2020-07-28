@@ -6923,7 +6923,7 @@ double SimpleX::recombine(){
         // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
         // to the 2/3 power. Together with straight_correction_factor, they allow for a good
         // approximation for a cell's cross section
-        G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+        G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
       }
       else {
         G = interstellar_fuv_field;
@@ -7038,7 +7038,7 @@ double SimpleX::cooling_rate( Site& site ){
     // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
-    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+    G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
   }
   else {
     G = interstellar_fuv_field;
@@ -7073,13 +7073,36 @@ double SimpleX::cooling_rate( Site& site ){
     //loop over metal line cooling curves
     for(unsigned int j=1; j<curves.size();j++){// j=1 because hydrogen is not taken into account here (but explicitly above)
       
+      // Account for elements locked in molecular form, and thus not contributing to atomic cooling
+      double molecule_correction_factor = 1.;
+      if (carbmonox) {
+        if (j == 2 || j == 3)
+          molecule_correction_factor *= n_C/(n_C + n_CO);
+        else if (j == 5 || j == 6)
+          molecule_correction_factor *= n_O/(n_O + n_CO);
+      }
+
+      // Abundance depletion due to fixation in dust, as per Sembach 2000
+      if (dust) {
+        if (j == 2 || j == 3)
+          molecule_correction_factor *= pow(10., 8.15-8.55);
+        else if (j == 4)
+          molecule_correction_factor *= pow(10., 7.88-7.97);
+        else if (j == 5 || j == 6)
+          molecule_correction_factor *= pow(10., 8.50-8.87);
+        else if (j == 8 || j == 9)
+          molecule_correction_factor *= pow(10., 7.18-7.55);
+        else if (j == 10 || j == 11)
+          molecule_correction_factor *= pow(10., 6.21-7.51);
+      }
+
       // abundance*cooling/rate
       if(withH[j]){
-	      C += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_H * site.get_metallicity();
-        total += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_H * site.get_metallicity();
+	      C += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_H * site.get_metallicity() * molecule_correction_factor;
+        total += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_H * site.get_metallicity() * molecule_correction_factor;
       }else{
-        C += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_e * site.get_metallicity();
-        total += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_e * site.get_metallicity();
+        C += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_e * site.get_metallicity() * molecule_correction_factor;
+        total += abundances[j]*curves[j].get_value(site.get_temperature()) * n_H * n_e * site.get_metallicity() * molecule_correction_factor;
       }
     }
     // if(site.get_metallicity() > 0.0 ){
@@ -7150,6 +7173,12 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
   //total number density
   double n_H = n_HI + n_HII + 2.0*n_H2;
 
+  //ionised carbon density
+  double n_C = site.get_n_C() * UNIT_D;
+
+  //electron density is the same in case of hydrogen only
+  double n_e = n_HII + n_C;
+
   double G;
 
   if (fuvprop) {
@@ -7161,7 +7190,7 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
     // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
-    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+    G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
   }
   else {
     G = interstellar_fuv_field;
@@ -7169,8 +7198,11 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
 
   H += cosmic_ray_heating_coeff(cosmic_ray_ionization_rate) * n_HI;
 
+  //double n_e = ( (double) site.get_n_HII() + (double) site.get_n_C()) * UNIT_D;
+  //H += Xray_heating_coeff(1e19, n_e, n_H) * n_HI;
+
   if (dust) {
-    H += photoelectric_heating_coeff( n_HII , site.get_temperature(), 0.5, G ) * n_H;
+    H += photoelectric_heating_coeff( n_e , site.get_temperature(), 0.5, G ) * n_H;
   }
 
 
@@ -7428,8 +7460,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
     //total number of collisional ionisations in this time step
     double initial_coll_ionisations = 0.0;
+    double n_e = ((double) site.get_n_HII() + (double) site.get_n_C() ) * UNIT_D;
     if(coll_ion){
-      double n_e = ((double) site.get_n_HII() + (double) site.get_n_C() ) * UNIT_D;
       //number of coll ionisations is coll ion coeff * n_e * number of atoms * time step
       initial_coll_ionisations = coll_ion_coeff_HI( site.get_temperature() ) * n_e * initial_N_HI * UNIT_T;
     }
@@ -7437,6 +7469,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
     //total number of cosmic ray ionisations in this time step
     double initial_cosmic_ionisations = 0.0;
     initial_cosmic_ionisations = cosmic_ray_ionization_rate * initial_N_HI * UNIT_T;
+
+    //initial_cosmic_ionisations += Xray_ionisations(1e19, n_e, n_H);
 
     //the initial ionisations without accounting for the number of neutral atoms
     double initial_numIonised = initial_photo_ionisations + initial_coll_ionisations + initial_cosmic_ionisations;
@@ -7449,7 +7483,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
       // to the 2/3 power. Together with straight_correction_factor, they allow for a good
       // approximation for a cell's cross section
-      G = N_in_total[numFreq] / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L*straight_correction_factor, 2) * pow(36.*M_PI, 1./3.) );
+      G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
     }
     else {
       G = interstellar_fuv_field;
@@ -7707,6 +7741,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
     //number of cosmic ray ionisations in this step
     double cosmic_ionisations_step = 0.0;
+    //cosmic_ionisations_step = (cosmic_ray_ionization_rate + Xray_ionisations(1e19, N_HII_step * one_over_volume, n_H)) * N_HI_step * dt_ss;
     cosmic_ionisations_step = cosmic_ray_ionization_rate * N_HI_step * dt_ss;
 
 	numIonised_step = total_photo_ionisations_step + coll_ionisations_step + cosmic_ionisations_step;
@@ -7775,8 +7810,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   }
 
 	if( num_rec > N_HII_step){
+	  cerr << " Warning, subcycle step too large: num_rec: " << num_rec << " N_HII_step: " << N_HII_step << endl;
 	  num_rec = N_HII_step;
-	  cerr << " Warning, subcycle step too large: dx: " << num_rec << " N_HII_step: " << N_HII_step << endl;
 	}
 
 	number_of_recombinations += num_rec;
@@ -7882,7 +7917,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 		Gamma_c = coll_ion_coeff_HI( site.get_temperature() ) * (double) site.get_n_HII() * UNIT_D;
 	      }
 	      //total ionisation rate
-	      double Gamma = Gamma_H + Gamma_c + cosmic_ray_ionization_rate;
+	      double Gamma = Gamma_H + Gamma_c + cosmic_ray_ionization_rate;// + Xray_ionisations(1e19, N_HII_step * one_over_volume, n_H);
 	      //electron density times recombination coefficient
 	      double n_e_times_alpha=0.0;
   
@@ -7918,9 +7953,15 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
         }
 
         if (carbmonox) {
-          N_CO_step = n_H * abundances[2] / ( dissoc_coeff_CO ( G )/(formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G )*n_H) + 0.5) * site.get_volume() * UNIT_V;
-          N_C_step = n_H * abundances[2] * site.get_volume() * UNIT_V - N_CO_step;
-          N_O_step = n_H * abundances[5] * site.get_volume() * UNIT_V - N_CO_step;
+          double C_correction = 1.;
+          double O_correction = 1.;
+          if (dust) {
+            C_correction = pow(10., 8.15-8.55);
+            O_correction = pow(10., 8.50-8.87);
+          }
+          N_CO_step = n_H * abundances[2] * C_correction / ( dissoc_coeff_CO ( G )/(formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G )*n_H) + 0.5) * site.get_volume() * UNIT_V;
+          N_C_step = n_H * abundances[2] * C_correction * site.get_volume() * UNIT_V - N_CO_step;
+          N_O_step = n_H * abundances[5] * O_correction * site.get_volume() * UNIT_V - N_CO_step;
         }
 
         double N_rec_ion_eq = 0.0;

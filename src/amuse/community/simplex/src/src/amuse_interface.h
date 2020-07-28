@@ -95,11 +95,19 @@ class AMUSE_SimpleX : public SimpleX {
     carbmonox = ts; 
 
     if (carbmonox) {
-      xCO_max = 2.*( 3.31e-4 > 6.76e-4 ? 6.76e-4 : 3.31e-4 )/(3.31e-4 + 6.76e-4);
+      double xC = 3.31e-4;
+      double xO = 6.76e-4;
 
-      rho_frac_H = (1. - 3.31e-4 - 6.76e-4)/(1. + 3.31e-4*11. + 6.76e-4*15.);
-      rho_frac_C = 12.*3.31e-4/(1. + 3.31e-4*11. + 6.76e-4*15.);
-      rho_frac_O = 16.*6.76e-4/(1. + 3.31e-4*11. + 6.76e-4*15.);
+      if (dust) {
+        xC *= pow(10., 8.15-8.55);
+        xO *= pow(10., 8.50-8.87);
+      }
+
+      xCO_max = 2.*xC/(xC + xO);
+
+      rho_frac_H = (1. - xC - xO)/(1. + xC*11. + xO*15.);
+      rho_frac_C = 12.*xC/(1. + xC*11. + xO*15.);
+      rho_frac_O = 16.*xO/(1. + xC*11. + xO*15.);
     }
     else {
       xCO_max = 0.;
@@ -109,7 +117,8 @@ class AMUSE_SimpleX : public SimpleX {
       rho_frac_O = 0.;
     }
 
-    return 0;}
+    return 0;
+  }
   int get_carb_monox(int *ts){ *ts = carbmonox;return 0;}
   int set_hull_sink(int ts){ hull_sink = ts;return 0;}
   int get_hull_sink(int *ts){ *ts = hull_sink;return 0;}

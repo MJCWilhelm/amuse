@@ -52,6 +52,7 @@ double crossIntHI( double _upperBound, double _T );
 //! collisional ionisation coefficient of hydrogen from Theuns et al. 1998
 double coll_ion_coeff_HI( const double& _T );
 
+double Xray_ionisations (const double& Nw, const double& n_e, const double& n_H);
 
 
 /************************** Recombinations ************************************/
@@ -129,6 +130,8 @@ double H2_formation_heating_coeff( const double& densGas, const double& tempGas,
 
 // Cosmic ray heating from Goldsmith & Langer 1978
 double cosmic_ray_heating_coeff( const double& cr_ir );
+
+double Xray_heating_coeff(const double& Nw, const double& n_e, const double& n_H);
 
 
 
