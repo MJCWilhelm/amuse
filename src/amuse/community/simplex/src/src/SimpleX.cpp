@@ -7038,7 +7038,7 @@ double SimpleX::cooling_rate( Site& site ){
     // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
-    G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
   }
   else {
     G = interstellar_fuv_field;
@@ -7190,7 +7190,7 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
     // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
-    G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+    G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
   }
   else {
     G = interstellar_fuv_field;
@@ -7483,7 +7483,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       // (36 pi)^(1/3) is the ratio between a circle's area and an equal radius sphere
       // to the 2/3 power. Together with straight_correction_factor, they allow for a good
       // approximation for a cell's cross section
-      G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+      G = N_in_total[numFreq] / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
     }
     else {
       G = interstellar_fuv_field;
