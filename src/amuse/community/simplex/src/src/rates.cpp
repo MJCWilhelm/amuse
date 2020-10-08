@@ -167,7 +167,10 @@ double critical_density( const double& xH, const double& xH2, const double& temp
   double dens_cr_H  = pow(10.0, 4.00  - 0.416*x - 0.327*x*x)/10.;
   double dens_cr_H2 = pow(10.0, 4.845 - 1.3*x + 1.62*x*x);
 
-  return 1.0/(xH/dens_cr_H + xH2/dens_cr_H2);
+  if (xH > 0. || xH2 > 0.)
+    return 1.0/(xH/dens_cr_H + xH2/dens_cr_H2);
+  else
+    return 1e16;
 }
 
 // Dissociation coefficient of CO from Nelson & Langer 1997
@@ -377,14 +380,17 @@ double CO_cooling_coeff( const double& densGas, const double& densH2, const doub
 
 
   double LabdaLO = 2.16e-27 * densH2 * pow(tempGas, 3./2.);
-  double LabdaHI = 0.;
-  if (densH2 > 0. && densCO > 0.)
-    LabdaHI = 2.21e-28 / densH2 * pow(tempGas, 4.0) / ( densCO/densGas * t_ff / (megaParsecToCm * 1e-11 ) ) * turbulence;
-  double beta = 1.;
-  if (densH2 > 0.)
-    beta = 1.23 * pow(densH2, 0.0533) * pow(tempGas, 0.164);
 
-  return pow(pow(LabdaLO, -1.0/beta) + pow(LabdaHI, -1.0/beta), -beta);
+  if (densH2 > 0. && densCO > 0.) {
+    double LabdaHI = 2.21e-28 / densH2 * pow(tempGas, 4.0) / ( densCO/densGas * t_ff / (megaParsecToCm * 1e-11 ) ) * turbulence;
+
+    double beta = 1.23 * pow(densH2, 0.0533) * pow(tempGas, 0.164);
+
+    return pow(pow(LabdaLO, -1.0/beta) + pow(LabdaHI, -1.0/beta), -beta);
+  }
+
+  else
+    return LabdaLO;
 }
 
 // Collisional dissociation cooling rate of H2, with both H and H2 from Lepp & Shull 1983
@@ -398,6 +404,11 @@ double H2_coll_dissoc_cooling_coeff( const double& densGas, const double& densH2
   double x = log10(tempGas/1e4);
   double LrH =   tempGas < 1087. ? pow(10., -19.24 + 0.474*x - 1.247*x*x) : 3.90e-19 * exp(-6118./tempGas);
   double LrL = ( tempGas < 4031. ? pow(10., -22.9  - 0.553*x - 1.148*x*x) : 1.38e-22 * exp(-9243./tempGas) )*(pow(densH2, 0.77) + 1.2*pow(densH, 0.77));
+
+  if (!(LvL > 0.))
+    LvL = 1e-35;
+  if (!(LrL > 0.))
+    LrL = 1e-35;
 
   return LvH/(1. + LvH/LvL) + LrH/(1. + LrH/LrL);
 }

@@ -3931,7 +3931,7 @@ void SimpleX::check_ballistic_sites(){
         double x = it->get_n_H2() * UNIT_D / (5e14);
         tau += -log( 0.965*pow(1.+x/b5, -2) + 0.035/sqrt(1.+x)*exp(-8.5e-4 * sqrt(1.+x)) );
         if (dust)
-          tau += ( it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2() ) * UNIT_D * it->get_neigh_dist() * UNIT_L *sigma_dust_fuv * straight_correction_factor;
+          tau += ( it->get_n_HI() + it->get_n_HII() + 2.*it->get_n_H2() ) * UNIT_D * it->get_neigh_dist() * UNIT_L * sigma_dust_fuv * straight_correction_factor;
       }
       tau /= numFreq + fuvprop;
 
@@ -6419,7 +6419,7 @@ void SimpleX::return_physics(){
           
         }else{
           cerr << " (" << COMM_RANK << ") Error in return_physics(): site not mapped" << endl;
-          cerr << it->get_vertex_id() << " " << i << endl;
+          cerr << it->get_vertex_id() << " " << i << " " << site_properties.size() << " " << sites.size() << endl;
           MPI_Abort(MPI_COMM_WORLD,  -1 );
         }
       }else{
@@ -6924,6 +6924,8 @@ double SimpleX::recombine(){
         // to the 2/3 power. Together with straight_correction_factor, they allow for a good
         // approximation for a cell's cross section
         G = N_in_total / UNIT_T / ( pow((double) it->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+        if (it->get_surface() > 0. && G < interstellar_fuv_field)
+          G = interstellar_fuv_field;
       }
       else {
         G = interstellar_fuv_field;
@@ -7025,7 +7027,9 @@ double SimpleX::cooling_rate( Site& site ){
   double n_CO = site.get_n_CO() * UNIT_D;
 
   //electron density is the same in case of hydrogen only
-  double n_e = n_HII + n_C;
+  double n_e = n_HII;
+  if (carbmonox)
+    n_e += n_C;
 
   double G;
 
@@ -7039,11 +7043,12 @@ double SimpleX::cooling_rate( Site& site ){
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
     G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+    if (site.get_surface() > 0. && G < interstellar_fuv_field)
+      G = interstellar_fuv_field;
   }
   else {
     G = interstellar_fuv_field;
   }
-
 
   //recombination cooling
   if(rec_rad){
@@ -7052,18 +7057,14 @@ double SimpleX::cooling_rate( Site& site ){
     C += recomb_cooling_coeff_HII_caseB( site.get_temperature() ) * n_e * n_HII * site.get_clumping();;
   }
 
-
   //collisional ionisation cooling
   C += coll_ion_cooling_coeff_HI( site.get_temperature() ) * n_e * n_HI;
 
-
   //collisional de-excitation cooling
   C += coll_excit_cooling_coeff_HI( site.get_temperature() ) * n_e * n_HI;
-  
 
   //free-free cooling
   C += ff_cooling_coeff( site.get_temperature() ) * n_e * n_HII;
-
 
   //metal cooling (including helium for the moment)
   if(metal_cooling){
@@ -7124,7 +7125,6 @@ double SimpleX::cooling_rate( Site& site ){
     // }
   }
 
-
   if (dust) {
     C += recomb_cooling_coeff_HII_grain( n_e, site.get_temperature(), 0.5, G ) * n_e * n_H;
 
@@ -7145,7 +7145,6 @@ double SimpleX::cooling_rate( Site& site ){
 
     C += CO_cooling_coeff( n_H, n_H2, n_CO, site.get_temperature(), t_ff, site.get_turbulence()) * n_CO;
   }
-
 
   //total cooling rate in cell
   double cooling = C * site.get_volume() * UNIT_V;
@@ -7177,11 +7176,13 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
   double n_C = site.get_n_C() * UNIT_D;
 
   //electron density is the same in case of hydrogen only
-  double n_e = n_HII + n_C;
+  double n_e = n_HII;
+  if (carbmonox)
+    n_e += n_C;
 
   double G;
 
-  if (fuvprop) {
+  if (fuvprop && site.get_surface() == 0.) {
     int numPixels = ( site.get_ballistic() ) ? site.get_numNeigh() : number_of_directions;
     double N_in = 0.0;
     for (int j = 0; j < numPixels; j++) {
@@ -7191,6 +7192,8 @@ double SimpleX::heating_rate( Site& site, const vector<double>& N_ion, const dou
     // to the 2/3 power. Together with straight_correction_factor, they allow for a good
     // approximation for a cell's cross section
     G = N_in * UNIT_P / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+    if (site.get_surface() > 0. && G < interstellar_fuv_field)
+      G = interstellar_fuv_field;
   }
   else {
     G = interstellar_fuv_field;
@@ -7460,7 +7463,9 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 
     //total number of collisional ionisations in this time step
     double initial_coll_ionisations = 0.0;
-    double n_e = ((double) site.get_n_HII() + (double) site.get_n_C() ) * UNIT_D;
+    double n_e = (double) site.get_n_HII() * UNIT_D;
+    if (carbmonox)
+        n_e += (double) site.get_n_C() * UNIT_D;
     if(coll_ion){
       //number of coll ionisations is coll ion coeff * n_e * number of atoms * time step
       initial_coll_ionisations = coll_ion_coeff_HI( site.get_temperature() ) * n_e * initial_N_HI * UNIT_T;
@@ -7484,6 +7489,8 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       // to the 2/3 power. Together with straight_correction_factor, they allow for a good
       // approximation for a cell's cross section
       G = N_in_total[numFreq] / UNIT_T / ( pow((double) site.get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) );
+      if (site.get_surface() > 0. && G < interstellar_fuv_field)
+        G = interstellar_fuv_field;
     }
     else {
       G = interstellar_fuv_field;
@@ -7524,8 +7531,11 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       double tot_ions = initial_N_HII + initial_numIonised;
 
       //recombination time scale, if no recombinations it is taken to be much larger than time step
+      double recomb_rate = recomb_coeff_HII_caseB( site.get_temperature() );
+      if (dust)
+        recomb_rate += recomb_coeff_HII_grain( site.get_temperature(), tot_ions/(site.get_volume() * UNIT_V), G, 0.5 );
       double t_rec = (tot_ions > 0.0 ) ? ( site.get_volume() * pow( UNIT_L, 3.0 ) )/
-	( tot_ions * site.get_clumping() * (recomb_coeff_HII_caseB( site.get_temperature() ) + dust*recomb_coeff_HII_grain( site.get_temperature(), tot_ions/(site.get_volume() * UNIT_V), G, 0.5 )) ) : 1.e5 * UNIT_T;
+	( tot_ions * site.get_clumping() * recomb_rate ) : 1.e5 * UNIT_T;
 
       //molecular hydrogen formation timescale
       double t_form = site.get_n_HI() > 0.0 ? 1.0/( ((double) site.get_n_HI() + (double) site.get_n_HII() + 2.* (double) site.get_n_H2()) * UNIT_D * formation_coeff_H2_grain( site.get_temperature(), pow(G/stefan_boltzmann, 0.25) )) : 1.e5 * UNIT_T;
@@ -7649,7 +7659,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
        numCODissociated_step = N_CO_step * dissoc_coeff_CO ( G ) * dt_ss;
 
       if ( numCODissociated_step > N_CO_step){
-        cerr << " Warning, subcycle step too large: numDissociated: " << numCODissociated_step << " N_CO_step: " << N_CO_step << endl;
+        //cerr << " Warning, subcycle step too large: numDissociated: " << numCODissociated_step << " N_CO_step: " << N_CO_step << endl;
         numCODissociated_step = N_CO_step;
       }
 
@@ -7663,7 +7673,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       num_form_CO = N_C_step * formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
 
       if (num_form_CO > N_C_step || num_form_CO > N_O_step) {
-        cerr << " Warning, subcycle step too large: num_form: " << num_form_CO << " N_C_step: " << N_C_step << " N_O_step: " << N_O_step << endl;
+        //cerr << " Warning, subcycle step too large: num_form: " << num_form_CO << " N_C_step: " << N_C_step << " N_O_step: " << N_O_step << endl;
         num_form_CO = N_C_step > N_O_step ? N_O_step : N_C_step;
       }
 
@@ -7686,7 +7696,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       numDissociated_step += dissoc_coeff_H_molecule( n_H, (double) site.get_temperature(), dens_cr ) * N_H2_step * one_over_volume * initial_N_H2 * dt_ss;
 
       if ( numDissociated_step > N_H2_step){
-        cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
+        //cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
         numDissociated_step = N_H2_step;
       }
 
@@ -7697,7 +7707,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       num_form = N_HI_step * formation_coeff_H2_grain( (double) site.get_temperature(), pow(G/stefan_boltzmann, 0.25) ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
 
       if (num_form > 0.5*N_HI_step) {
-        cerr << " Warning, subcycle step too large: num_form: " << num_form << " N_HI_step: " << N_HI_step << endl;
+        //cerr << " Warning, subcycle step too large: num_form: " << num_form << " N_HI_step: " << N_HI_step << endl;
         num_form = 0.5*N_HI_step;
       }
 
@@ -7740,14 +7750,14 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	}
 
     //number of cosmic ray ionisations in this step
-    double cosmic_ionisations_step = 0.0;
-    //cosmic_ionisations_step = (cosmic_ray_ionization_rate + Xray_ionisations(1e19, N_HII_step * one_over_volume, n_H)) * N_HI_step * dt_ss;
+    double cosmic_ionisations_step = cosmic_ray_ionization_rate * N_HI_step * dt_ss;
+    //cosmic_ionisations_step += Xray_ionisations(1e19, N_HII_step * one_over_volume, n_H) * N_HI_step * dt_ss;
     cosmic_ionisations_step = cosmic_ray_ionization_rate * N_HI_step * dt_ss;
 
 	numIonised_step = total_photo_ionisations_step + coll_ionisations_step + cosmic_ionisations_step;
 
 	if( numIonised_step > N_HI_step){
-	  cerr << " Warning, subcycle step too large: numIonised: " << numIonised_step << " N_HI_step: " << N_HI_step << endl;
+	  //cerr << " Warning, subcycle step too large: numIonised: " << numIonised_step << " N_HI_step: " << N_HI_step << endl;
 	  numIonised_step = N_HI_step;
 	}
 
@@ -7810,7 +7820,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   }
 
 	if( num_rec > N_HII_step){
-	  cerr << " Warning, subcycle step too large: num_rec: " << num_rec << " N_HII_step: " << N_HII_step << endl;
+	  //cerr << " Warning, subcycle step too large: num_rec: " << num_rec << " N_HII_step: " << N_HII_step << endl;
 	  num_rec = N_HII_step;
 	}
 
@@ -7910,7 +7920,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	      //total number of atoms
 	      double N_H = n_H * site.get_volume() * UNIT_V;
 	      //photo-ionisation rate
-	      double Gamma_H = total_photo_ionisations_step/(dt_ss * N_HI_step);
+	      double Gamma_H = (N_HI_step > 0.) ? total_photo_ionisations_step/(dt_ss * N_HI_step) : 0.;
 	      //collisional ionisation rate
 	      double Gamma_c = 0.0;
 	      if(coll_ion){
@@ -8886,7 +8896,6 @@ void SimpleX::radiation_transport( const unsigned int& run ){
     if( dirConsTransport || combinedTransport ){
       rotate_solid_angles();
     }//if direction conserving transport
-
 
   } //for all sweeps
 

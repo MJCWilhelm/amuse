@@ -409,7 +409,7 @@ int AMUSE_SimpleX::evolve(double t_target, int sync) {
   // if(COMM_RANK == 0){
   //   cerr << "AMUSE_SimpleX: performing radiation transport...";
   // }
-    
+ 
   if(COMM_RANK == 0){
     //cerr << "start sweeping" << endl;
     simpleXlog << endl << "  start sweeping till " << t_target << endl;  
@@ -433,7 +433,7 @@ int AMUSE_SimpleX::evolve(double t_target, int sync) {
   // if(COMM_RANK == 0){
   //   cerr << " Done" << endl;
   // }
- 
+//cout << "C " << site_properties.size() << " " << sites.size() << endl; 
   return 0;
 
 }
@@ -739,6 +739,11 @@ int AMUSE_SimpleX::get_fuv_intensity(int id, double *fuv_intensity){
           // to the 2/3 power. Together with straight_correction_factor, they allow for a good
           // approximation for a cell's cross section
           *fuv_intensity = (meanIntensity * UNIT_P / UNIT_T / ( pow((double) p->get_volume(), 2./3.) * pow(UNIT_L, 2) * straight_correction_factor * pow(36.*M_PI, 1./3.) )) / G0;
+          if (p->get_surface() > 0. && *fuv_intensity < interstellar_fuv_field / G0)
+            *fuv_intensity = interstellar_fuv_field / G0;
+        }
+        else {
+          *fuv_intensity = interstellar_fuv_field / G0;
         }
         return 1;
       }
