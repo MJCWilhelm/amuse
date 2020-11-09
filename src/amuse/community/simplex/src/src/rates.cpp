@@ -336,9 +336,11 @@ double H2_cooling_coeff( const double& tempGas, const double& densGas){
   //if (tempGas < 100. || tempGas > 4000.) {
   //  cout << "Temperature out of bounds (" << tempGas << " K), extrapolating fit\nExtrapolation likely safe" << endl;
   //}
-  if (densGas < 1e-4 || densGas > 1e8) {
-    cout << "Density out of bounds (" << densGas << " cm^-3), extrapolating fit\nExtrapolation potentially unsafe" << endl;
-  }
+  //if (densGas < 1e-4 || densGas > 1e8) {
+  //  cout << "Density out of bounds (" << densGas << " cm^-3), extrapolating fit\nExtrapolation potentially unsafe" << endl;
+  //}
+  logn = densGas > 1e-4 ? logn : -4.;
+  logn = densGas < 1e8  ? logn : 8.;
 
   temp += -1.07761178e2;
   temp +=  1.17901741e2*logT;

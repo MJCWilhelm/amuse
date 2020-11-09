@@ -134,7 +134,7 @@ double cooling_curve::get_value(double T){
   if(logT>=max)
     return pow(10.0, Cooling.back());// return the last entry
 
-  if(logT<=min)
+  if(T <= 0. || logT<=min)
     return pow(10.0, Cooling.front());// return the first entry
 
   double pos = ((logT-min)/delta)*double(elements-1);

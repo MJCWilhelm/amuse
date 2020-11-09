@@ -1176,7 +1176,7 @@ int new_particle(int *id, double x,double y,double z,double rho,
                                           
                                                                                   
     long tmp_id;
-    double bs;
+    double bs, xion_temp, xmol_temp;
     int ret, totalret;
     
     (*SimpleXGrid).get_sizeBox(&bs);
@@ -1192,8 +1192,16 @@ int new_particle(int *id, double x,double y,double z,double rho,
 //        return -1;
     *id = lastid++;
     tmp_id = *id;
+
+    if (xion + xmol > 1.) {
+        xion_temp = 0.5; xmol_temp = 0.5;
+    }
+    else {
+        xion_temp = xion; xmol_temp = xmol;
+    }
+
     if((*SimpleXGrid).get_syncflag() == -1) {
-        return (*SimpleXGrid).add_vertex(&tmp_id, x, y, z, rho, flux, xion, uInt, xmol, metallicity, fuv_flux, xCO, turbulence);
+        return (*SimpleXGrid).add_vertex(&tmp_id, x, y, z, rho, flux, xion_temp, uInt, xmol_temp, metallicity, fuv_flux, xCO, turbulence);
     }
     if((*SimpleXGrid).get_syncflag() >= 0) {
         ret=(*SimpleXGrid).add_site(&tmp_id, x, y, z, rho, flux, xion, uInt, xmol, metallicity, fuv_flux, xCO, turbulence);

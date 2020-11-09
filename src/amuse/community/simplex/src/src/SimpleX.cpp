@@ -7659,7 +7659,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
        numCODissociated_step = N_CO_step * dissoc_coeff_CO ( G ) * dt_ss;
 
       if ( numCODissociated_step > N_CO_step){
-        //cerr << " Warning, subcycle step too large: numDissociated: " << numCODissociated_step << " N_CO_step: " << N_CO_step << endl;
+        cerr << " Warning, subcycle step too large: numDissociated: " << numCODissociated_step << " N_CO_step: " << N_CO_step << endl;
         numCODissociated_step = N_CO_step;
       }
 
@@ -7673,7 +7673,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       num_form_CO = N_C_step * formation_coeff_CO( n_H, (double) site.get_n_H2() * UNIT_D, (double) site.get_n_O() * UNIT_D, G ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
 
       if (num_form_CO > N_C_step || num_form_CO > N_O_step) {
-        //cerr << " Warning, subcycle step too large: num_form: " << num_form_CO << " N_C_step: " << N_C_step << " N_O_step: " << N_O_step << endl;
+        cerr << " Warning, subcycle step too large: num_form: " << num_form_CO << " N_C_step: " << N_C_step << " N_O_step: " << N_O_step << endl;
         num_form_CO = N_C_step > N_O_step ? N_O_step : N_C_step;
       }
 
@@ -7696,7 +7696,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       numDissociated_step += dissoc_coeff_H_molecule( n_H, (double) site.get_temperature(), dens_cr ) * N_H2_step * one_over_volume * initial_N_H2 * dt_ss;
 
       if ( numDissociated_step > N_H2_step){
-        //cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
+        cerr << " Warning, subcycle step too large: numDissociated: " << numDissociated_step << " N_H2_step: " << N_H2_step << endl;
         numDissociated_step = N_H2_step;
       }
 
@@ -7707,7 +7707,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
       num_form = N_HI_step * formation_coeff_H2_grain( (double) site.get_temperature(), pow(G/stefan_boltzmann, 0.25) ) * ((double) site.get_n_HI() + (double) site.get_n_HII() + 2. * (double) site.get_n_H2()) * UNIT_D * dt_ss;
 
       if (num_form > 0.5*N_HI_step) {
-        //cerr << " Warning, subcycle step too large: num_form: " << num_form << " N_HI_step: " << N_HI_step << endl;
+        cerr << " Warning, subcycle step too large: num_form: " << num_form << " N_HI_step: " << N_HI_step << endl;
         num_form = 0.5*N_HI_step;
       }
 
@@ -7757,7 +7757,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
 	numIonised_step = total_photo_ionisations_step + coll_ionisations_step + cosmic_ionisations_step;
 
 	if( numIonised_step > N_HI_step){
-	  //cerr << " Warning, subcycle step too large: numIonised: " << numIonised_step << " N_HI_step: " << N_HI_step << endl;
+	  cerr << " Warning, subcycle step too large: numIonised: " << numIonised_step << " N_HI_step: " << N_HI_step << endl;
 	  numIonised_step = N_HI_step;
 	}
 
@@ -7820,7 +7820,7 @@ vector<double> SimpleX::solve_rate_equation( Site& site ){
   }
 
 	if( num_rec > N_HII_step){
-	  //cerr << " Warning, subcycle step too large: num_rec: " << num_rec << " N_HII_step: " << N_HII_step << endl;
+	  cerr << " Warning, subcycle step too large: num_rec: " << num_rec << " N_HII_step: " << N_HII_step << endl;
 	  num_rec = N_HII_step;
 	}
 
